@@ -6,7 +6,7 @@ https://{tenantApiHostname}/{tenantName}/slim-api/v1alpha1. We answer with
 this search head and a tenant name that routes that URL to our runtime.
 """
 
-from aitk_local import config, credentials, splunkd
+from aitk_local import config, credentials, log, splunkd
 
 # https://host:port/services/aitk_local/slim-api/v1alpha1 → this app's runtime.
 TENANT_NAME = "services/aitk_local"
@@ -17,6 +17,17 @@ REQUIRED_CAPABILITY = "admin_all_objects"
 
 
 def handle(request):
+    try:
+        return _handle(request)
+    except splunkd.SplunkdError as e:
+        log.get_logger().error("Cloud Connect lookup failed: %s", e)
+        return {
+            "status": 503,
+            "payload": {"message": "Local agent runtime unavailable: credential store or splunkd error"},
+        }
+
+
+def _handle(request):
     if request["method"] != "GET" or request.get("path_info", "").strip("/") != AITK_CONNECTION:
         return {"status": 404, "payload": {"message": "Not found"}}
 

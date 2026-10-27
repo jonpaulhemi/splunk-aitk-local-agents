@@ -17,7 +17,8 @@ def _conf():
 
 def advertised_host_and_port(rest_uri):
     """'host:port' AI Toolkit should use to reach the local runtime."""
-    runtime = _conf()["runtime"] if _conf().has_section("runtime") else {}
+    conf = _conf()
+    runtime = conf["runtime"] if conf.has_section("runtime") else {}
     host = (runtime.get("advertised_host") or "").strip() or socket.getfqdn()
     port = (runtime.get("advertised_port") or "").strip() or str(urlsplit(rest_uri).port)
     return f"{host}:{port}"

@@ -7,6 +7,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from splunk import RESTException
+
 
 class _Response:
     def __init__(self, status, headers):
@@ -56,4 +58,6 @@ def simpleRequest(
         with urllib.request.urlopen(req, context=_context(), timeout=timeout or 60) as r:
             return _Response(r.status, dict(r.headers)), r.read()
     except urllib.error.HTTPError as e:
+        if raiseAllErrors:
+            raise RESTException(e.code, e.reason)
         return _Response(e.code, dict(e.headers)), e.read()

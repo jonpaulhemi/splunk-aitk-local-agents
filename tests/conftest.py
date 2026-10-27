@@ -12,6 +12,7 @@ unpacked `Splunk_ML_Toolkit` directory (from splunk-ai-toolkit_620.tgz):
 
 import importlib
 import os
+import types
 import shutil
 import sys
 from pathlib import Path
@@ -53,18 +54,24 @@ def splunk_home(tmp_path_factory):
 
 
 @pytest.fixture
-def splunkd(splunk_home):
-    local = splunk_home / "etc" / "apps" / "splunk_cloud_connect" / "local"
+def runtime_conf(splunk_home):
+    """This app's local/aitk_local.conf in the fake Splunk home."""
+    return splunk_home / "etc" / "apps" / "splunk_cloud_connect" / "local" / "aitk_local.conf"
+
+
+@pytest.fixture
+def splunkd(splunk_home, runtime_conf, monkeypatch):
+    local = runtime_conf.parent
     shutil.rmtree(local, ignore_errors=True)
     local.mkdir()
     # Tests reach the fake by its name on the cert, as AI Toolkit must reach the
     # real search head by its FQDN.
-    (local / "aitk_local.conf").write_text("[runtime]\nadvertised_host = localhost\n")
+    runtime_conf.write_text("[runtime]\nadvertised_host = localhost\n")
     server = FakeSplunkd(splunk_home, {
         "cert": splunk_home / "server.pem",
         "key": splunk_home / "server.key",
     }).start()
-    os.environ["FAKE_SPLUNKD_URI"] = server.uri
+    monkeypatch.setenv("FAKE_SPLUNKD_URI", server.uri)
     yield server
     server.stop()
 
@@ -80,18 +87,5 @@ def aitk(splunk_home):
     # running under it; the test interpreter stands in for Splunk's Python.
     bouncer.SPLUNK_PYTHON_PATH = sys.executable
 
-    class AITK:
-        util = importlib.import_module("util.ai_commander_util")
+    return types.SimpleNamespace(util=importlib.import_module("util.ai_commander_util"))
 
-    return AITK
-
-
-def searchinfo(splunkd, token, username="admin", with_system_token=True):
-    """The searchinfo dict AI Toolkit builds for a command or REST call."""
-    return {
-        "splunkd_uri": splunkd.uri,
-        "session_key": token,
-        "admin_session_key": splunkd.system_token if with_system_token else None,
-        "app": "Splunk_ML_Toolkit",
-        "username": username,
-    }

@@ -29,6 +29,7 @@ from pathlib import Path
 
 SYSTEM_USER = "splunk-system-user"
 
+NOT_FOUND = (404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]})
 UNAUTHORIZED_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>\n<response>\n  <messages>\n'
     '    <msg type="ERROR">Unauthorized</msg>\n  </messages>\n</response>\n'
@@ -87,7 +88,7 @@ class FakeSplunkd:
         self.tokens = {}
         self.system_token = self.login(SYSTEM_USER)
         self.passwords = {}  # (app, realm, name) -> clear password
-        self.requests = []  # (method, path) log, for assertions on traffic
+        self.fail_credential_store = False  # simulate a broken storage/passwords
         self.routes = []
         self._lock = threading.Lock()
         self._server = None
@@ -133,13 +134,13 @@ class FakeSplunkd:
                 if bin_dir not in sys.path:
                     sys.path.insert(0, bin_dir)
                 module_name = script[:-3].replace("/", ".") if script.endswith(".py") else script
-                module = importlib.import_module(module_name)
                 handler_spec = conf.get("handler")
                 if handler_spec:
                     mod_name, _, cls_name = handler_spec.rpartition(".")
                     cls = getattr(importlib.import_module(mod_name), cls_name)
                 else:
-                    cls = _find_handler_class(module)
+                    # AI Toolkit's [script:mltk] names only the script.
+                    cls = _find_handler_class(importlib.import_module(module_name))
                 self.routes.append(
                     Route(
                         app=app_dir.name,
@@ -217,18 +218,15 @@ class FakeSplunkd:
         parsed = urllib.parse.urlsplit(raw_path)
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-        with self._lock:
-            self.requests.append((method, path))
-
         parts = [p for p in path.split("/") if p]
         if not parts or parts[0] not in ("services", "servicesNS"):
-            return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+            return NOT_FOUND
         if parts[0] == "servicesNS":
             if len(parts) < 3:
-                return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+                return NOT_FOUND
             ns_user, ns_app, rest = parts[1], parts[2], parts[3:]
             if ns_app not in self.installed_apps() and ns_app != "-":
-                return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+                return NOT_FOUND
         else:
             ns_user, ns_app, rest = None, None, parts[1:]
         rest_path = "/" + "/".join(rest)
@@ -241,14 +239,18 @@ class FakeSplunkd:
         )
         if route is not None:
             if route.require_auth and user is None:
-                return 401, {"Content-Type": "text/xml; charset=UTF-8"}, UNAUTHORIZED_XML
+                return self._unauthorized()
             return self._call_handler(
                 route, method, rest_path, query, headers, body, user, token, ns_user, ns_app
             )
 
         if user is None:
-            return 401, {"Content-Type": "text/xml; charset=UTF-8"}, UNAUTHORIZED_XML
+            return self._unauthorized()
         return self._builtin(method, rest, query, body, user, ns_app)
+
+    @staticmethod
+    def _unauthorized():
+        return 401, {"Content-Type": "text/xml; charset=UTF-8"}, UNAUTHORIZED_XML
 
     def _call_handler(self, route, method, rest_path, query, headers, body, user, token, ns_user, ns_app):
         request = {
@@ -304,7 +306,7 @@ class FakeSplunkd:
         if len(rest) == 3 and rest[:2] == ["authentication", "users"] and method == "GET":
             target = self.users.get(rest[2])
             if target is None:
-                return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+                return NOT_FOUND
             return 200, {}, {
                 "entry": [
                     {"content": {"capabilities": self._capabilities(target), "roles": target.roles}}
@@ -314,7 +316,7 @@ class FakeSplunkd:
         if rest[:2] == ["storage", "passwords"] and ns_app:
             return self._passwords(method, rest[2:], body, user, ns_app)
 
-        return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+        return NOT_FOUND
 
     def _capabilities(self, user):
         if "*" in user.capabilities:
@@ -322,6 +324,8 @@ class FakeSplunkd:
         return list(user.capabilities)
 
     def _passwords(self, method, rest, body, user, app):
+        if self.fail_credential_store:
+            return 500, {}, {"messages": [{"type": "ERROR", "text": "Internal error"}]}
         if "list_storage_passwords" not in self._capabilities(user):
             return 403, {}, {"messages": [{"type": "ERROR", "text": "Forbidden"}]}
         with self._lock:
@@ -336,9 +340,9 @@ class FakeSplunkd:
                 realm, _, name = rest[0].rstrip(":").partition(":")
                 key = (app, realm, name)
                 if key not in self.passwords:
-                    return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+                    return NOT_FOUND
                 return 200, {}, {"entry": [self._password_entry(key)]}
-        return 404, {}, {"messages": [{"type": "ERROR", "text": "Not Found"}]}
+        return NOT_FOUND
 
     def _password_entry(self, key):
         app, realm, name = key
