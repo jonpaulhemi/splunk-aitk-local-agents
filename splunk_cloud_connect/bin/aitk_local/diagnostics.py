@@ -1,6 +1,9 @@
 """Admin-only self-check: do the bundled agent libraries load and run here?
 
 GET /services/aitk_local/diagnostics
+
+Imports every top-level module in lib/ (so every compiled extension gets
+loaded by this Python), then runs a one-step SQLite-checkpointed graph.
 """
 
 import importlib
@@ -8,27 +11,19 @@ import platform
 
 from aitk_local import bundled, splunkd
 
-REQUIRED_CAPABILITY = "admin_all_objects"
-MODULES = [
-    "langgraph",
-    "langgraph.checkpoint.sqlite",
-    "langchain_core",
-    "langchain_aws",
-    "langchain_openai",
-    "langchain_mcp_adapters",
-]
+# Submodules the agent engine needs that importing the top level doesn't load.
+SUBMODULES = ["langgraph.checkpoint.sqlite", "langgraph.graph", "langchain_mcp_adapters.client"]
 
 
 def handle(request):
-    if request["method"] != "GET":
-        return {"status": 405, "payload": {"message": "Method not allowed"}}
-    caps = splunkd.capabilities(request["server"]["rest_uri"], request["session"]["authtoken"])
-    if REQUIRED_CAPABILITY not in caps:
+    if request["method"] != "GET" or request.get("path_info"):
+        return {"status": 404, "payload": {"message": "Not found"}}
+    if not splunkd.is_admin(request):
         return {"status": 403, "payload": {"message": "Insufficient permissions"}}
 
     bundled.activate()
     imported, errors = [], {}
-    for name in MODULES:
+    for name in bundled.top_level_modules() + SUBMODULES:
         try:
             importlib.import_module(name)
             imported.append(name)
@@ -53,18 +48,18 @@ def _run_graph():
     from langgraph.checkpoint.sqlite import SqliteSaver
     from langgraph.graph import END, START, StateGraph
 
-    class State(TypedDict):
-        n: int
+    class Counter(TypedDict):
+        count: int
 
-    graph = StateGraph(State)
-    graph.add_node("inc", lambda s: {"n": s["n"] + 1})
+    graph = StateGraph(Counter)
+    graph.add_node("inc", lambda state: {"count": state["count"] + 1})
     graph.add_edge(START, "inc")
     graph.add_edge("inc", END)
     try:
         with SqliteSaver.from_conn_string(":memory:") as saver:
             app = graph.compile(checkpointer=saver)
-            result = app.invoke({"n": 1}, {"configurable": {"thread_id": "diagnostics"}})
+            result = app.invoke({"count": 1}, {"configurable": {"thread_id": "diagnostics"}})
             saved = saver.get({"configurable": {"thread_id": "diagnostics"}})
-        return "ok" if result == {"n": 2} and saved is not None else f"unexpected result {result}"
+        return "ok" if result == {"count": 2} and saved is not None else f"unexpected result {result}"
     except Exception as e:
         return f"{type(e).__name__}: {e}"

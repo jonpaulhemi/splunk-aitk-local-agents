@@ -5,6 +5,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from aitk_local import bundled
+
+bundled.activate()  # before anything else imports a library lib/ also ships
+
 from splunk.persistconn.application import PersistentServerConnectionApplication
 
 from aitk_local import diagnostics, entry
