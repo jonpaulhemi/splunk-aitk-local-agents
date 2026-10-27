@@ -53,12 +53,12 @@ def _agent(aitk, splunkd, admin, **settings):
     return manager.get_agent("triage", is_auth_by_pass=True)
 
 
-def _run(aitk, splunkd, admin, agent, llm_config, prompt, rows):
+def _run(aitk, splunkd, admin, agent, llm_config, prompt, rows, **params):
     options = {
-        "params": {"agent_name": agent["name"], "prompt": prompt},
+        "params": {"agent_name": agent["name"], "prompt": prompt, **params},
         "agent_config": agent,
         "mcp_configs": {"mcps": []},
-        "kb_configs": {"knowledge_bases": []},
+        "kb_configs": {"knowledge_bases": {"vector_dbs": []}},
         "llm_config": llm_config,
     }
     processor = aitk.ai_agent.AiAgentProcessor(options, searchinfo(splunkd, admin))
@@ -102,6 +102,8 @@ def test_model_error_comes_back_as_a_failed_row(aitk, splunkd, admin, llm):
 
     assert df.iloc[0]["status"] == "error"
     assert "LLM call failed" in df.iloc[0]["error"]
+    assert "HTTP 500" in df.iloc[0]["error"]
+    assert "model exploded" not in df.iloc[0]["error"]
 
 
 def test_agent_timeout_bounds_the_whole_run(aitk, splunkd, admin, llm):
@@ -125,6 +127,27 @@ def test_unsupported_provider_is_a_clear_failure(aitk, splunkd, admin, llm):
 
     assert df.iloc[0]["status"] == "error"
     assert "Ollama" in df.iloc[0]["error"]
+    assert llm.requests == []
+
+
+def test_connection_without_a_model_is_a_clear_failure(aitk, splunkd, admin, llm):
+    agent = _agent(aitk, splunkd, admin)
+
+    df = _run(aitk, splunkd, admin, agent, _llm_block(llm, model=None), "hi", [{"x": 1}])
+
+    assert df.iloc[0]["status"] == "error"
+    assert "no model" in df.iloc[0]["error"]
+    assert llm.requests == []
+
+
+def test_approval_resume_fails_clearly_instead_of_answering_nothing(aitk, splunkd, admin, llm):
+    agent = _agent(aitk, splunkd, admin)
+
+    df = _run(aitk, splunkd, admin, agent, _llm_block(llm), "Tool approval decisions submitted.", [{"x": 1}],
+              hitl_input=json.dumps({"decisions": [{"tool_call_id": "t1", "approved": True}]}))
+
+    assert df.iloc[0]["status"] == "error"
+    assert "Approvals" in df.iloc[0]["error"]
     assert llm.requests == []
 
 
@@ -159,14 +182,18 @@ def test_undecryptable_payload_is_a_failed_run_not_a_hang(aitk, splunkd, admin):
 
 
 def test_logs_hold_no_secrets_or_payload_values(aitk, splunkd, admin, llm, splunk_home):
-    llm.script = lambda request: "the secret answer is 42"
     agent = _agent(aitk, splunkd, admin)
+    llm.script = lambda request: "the secret answer is 42"
     _run(aitk, splunkd, admin, agent, _llm_block(llm), "my private question", [{"x": 1}])
+    llm.script = lambda request: (400, {"error": {"message": f"bad request: {last_user_message(request)}"}})
+    _run(aitk, splunkd, admin, agent, _llm_block(llm), "my failing private question", [{"x": 1}])
     log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
 
-    for secret in (API_KEY, _token(aitk, splunkd, admin), "my private question", "the secret answer", "You are terse"):
+    for secret in (API_KEY, _token(aitk, splunkd, admin), "my private question", "my failing private question",
+                   "the secret answer", "You are terse"):
         assert secret not in log
-    assert "invoke completed" in log
+    assert "success=True" in log and "success=False" in log
+    assert "not yet supported" not in log  # empty knowledge bases aren't "ignored"
 
 
 def test_custom_connection_maps_onto_chatopenai(splunk_home):

@@ -109,7 +109,8 @@ def _delete(runtime_id):
 
 def _invoke(body, token, rest_uri, system_token):
     try:
-        payload = envelope.open_envelope(body, token, _private_key(credentials.rsa_private_key_der(rest_uri, system_token)))
+        key = _private_key(credentials.rsa_private_key_der(rest_uri, system_token))
+        payload = envelope.open_envelope(body, token, key)
         chunk = agent.run(payload)
     except envelope.DecryptError as e:
         chunk = agent.failed(str(e))

@@ -5,7 +5,7 @@ AI Toolkit's aiagent sends, for a custom OpenAI-compatible connection:
      response_variability, max_tokens, request_timeout, reasoning_effort, ...}
 """
 
-OPENAI_COMPATIBLE = {"Custom", "OpenAI"}
+CUSTOM = "Custom"
 
 
 class UnsupportedProvider(ValueError):
@@ -14,11 +14,13 @@ class UnsupportedProvider(ValueError):
 
 def chat_model(block):
     provider = block.get("provider")
-    if provider not in OPENAI_COMPATIBLE:
+    if provider != CUSTOM:
         raise UnsupportedProvider(
             f"LLM provider '{provider}' isn't supported by the local agent runtime yet; "
             "use a Custom (OpenAI-compatible) connection"
         )
+    if not block.get("model"):
+        raise UnsupportedProvider("The agent's LLM connection has no model; pick one in the agent's settings")
     from langchain_openai import ChatOpenAI
 
     reasoning = str(block.get("reasoning_effort") or "NONE").lower()

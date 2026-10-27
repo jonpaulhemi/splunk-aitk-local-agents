@@ -5,9 +5,18 @@ import time
 
 from aitk_local import llm, log
 
-# Blocks AI Toolkit always sends that later tickets will use; for now only
-# their key names are logged.
+from aitk_local.isolated import TIMEOUT_SECONDS
+
+# Blocks AI Toolkit sends that later tickets will use; for now only their key
+# names are logged, and only when they hold something.
 NOT_YET_USED = ("mcps", "knowledge_bases", "skills")
+DEFAULT_TIMEOUT = 300
+# Leave the worker room to report the timeout before isolated.run kills it.
+MAX_TIMEOUT = TIMEOUT_SECONDS - 60
+
+
+class NotSupported(Exception):
+    pass
 
 
 def run(payload):
@@ -16,22 +25,24 @@ def run(payload):
     started = time.monotonic()
     block = payload.get("llm") or {}
     ids = f"runtime_id={payload.get('runtime_id')} session_id={payload.get('session_id')}"
-    ignored = sorted(k for k in NOT_YET_USED if payload.get(k))
+    ignored = sorted(k for k in NOT_YET_USED if _has_content(payload.get(k)))
     if ignored:
         logger.info("invoke %s: not yet supported, ignoring %s", ids, ignored)
-    timeout = int(payload.get("agent_timeout") or 300)
+    timeout = DEFAULT_TIMEOUT
     try:
+        timeout = _timeout(payload.get("agent_timeout"))
+        if "hitl_response" in payload:
+            raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
         response = asyncio.run(
             asyncio.wait_for(_answer(llm.chat_model(block), payload), timeout=timeout)
         )
         outcome = _completed(True, response)
-    except llm.UnsupportedProvider as e:
+    except (llm.UnsupportedProvider, NotSupported) as e:
         outcome = _completed(False, error=str(e))
-    except (asyncio.TimeoutError, TimeoutError):
+    except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s")
     except Exception as e:
-        # The exception text can echo the request; log only its type.
-        outcome = _completed(False, error=f"LLM call failed: {type(e).__name__}")
+        outcome = _completed(False, error=_llm_error(e))
     logger.info(
         "invoke completed %s model=%s provider=%s success=%s duration=%.1fs%s",
         ids, block.get("model"), block.get("provider"), outcome["success"], time.monotonic() - started,
@@ -40,12 +51,30 @@ def run(payload):
     return outcome
 
 
+def _timeout(value):
+    seconds = int(value) if value else DEFAULT_TIMEOUT
+    return max(1, min(seconds, MAX_TIMEOUT))
+
+
+def _has_content(value):
+    # knowledge_bases arrives as {"vector_dbs": []} even when the agent has none.
+    if isinstance(value, dict):
+        return any(_has_content(v) for v in value.values())
+    return bool(value)
+
+
+def _llm_error(e):
+    # The exception text can echo the request, so only its type and HTTP status go out.
+    status = getattr(e, "status_code", None)
+    return f"LLM call failed: {type(e).__name__}" + (f" (HTTP {status})" if status else "")
+
+
 async def _answer(model, payload):
     from langgraph.prebuilt import create_react_agent
 
     graph = create_react_agent(model, tools=[], prompt=payload.get("system_prompt") or None)
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]})
-    return state["messages"][-1].content
+    return state["messages"][-1].text
 
 
 def failed(error):

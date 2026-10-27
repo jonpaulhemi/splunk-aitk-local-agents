@@ -38,7 +38,8 @@ class FakeLLM:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
                 with fake._lock:
-                    fake.requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
+                    headers = {k.lower(): v for k, v in self.headers.items()}
+                    fake.requests.append({"path": self.path, "headers": headers, "body": body})
                     fake.in_flight += 1
                     fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
                 try:
@@ -56,7 +57,10 @@ class FakeLLM:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except BrokenPipeError:
+                    pass  # the client gave up waiting (timeout tests)
 
         class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             daemon_threads = True

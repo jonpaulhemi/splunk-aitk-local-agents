@@ -16,6 +16,10 @@ from aitk_local import log
 
 WORKER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "aitk_local_worker.py")
 TIMEOUT_SECONDS = 900
+# Prompts and answers must stay on this host: no LangSmith tracing, whatever
+# splunkd's environment says.
+SCRUBBED_ENV = ("LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING", "LANGSMITH_TRACING", "LANGCHAIN_API_KEY",
+                "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT")
 
 
 def run(handler_name, in_string):
@@ -28,6 +32,7 @@ def run(handler_name, in_string):
             input=data,
             capture_output=True,
             timeout=TIMEOUT_SECONDS,
+            env=_worker_env(),
         )
     except subprocess.TimeoutExpired:
         log.get_logger().error("%s worker timed out after %ss", handler_name, TIMEOUT_SECONDS)
@@ -41,3 +46,9 @@ def run(handler_name, in_string):
             "%s worker failed (%s); stderr tail:\n%s", handler_name, e, done.stderr.decode(errors="replace")[-4000:]
         )
         return {"status": 500, "payload": {"message": "Local agent runtime error; see aitk_local.log"}}
+
+
+def _worker_env():
+    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
+    env["LANGSMITH_TRACING"] = "false"
+    return env
