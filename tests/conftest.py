@@ -34,6 +34,8 @@ def pytest_configure(config):
             "Set AITK_APP to an unpacked AI Toolkit 6.2.0 app directory (Splunk_ML_Toolkit)."
         )
     sys.path.insert(0, str(FAKES))
+    # Handlers that run in a worker process need the fake `splunk` package too.
+    os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(FAKES), os.environ.get("PYTHONPATH")]))
 
 
 @pytest.fixture(scope="session")
@@ -50,6 +52,9 @@ def splunk_home(tmp_path_factory):
     os.environ["SPLUNK_HOME"] = str(home)
     tls = make_ca_and_server_cert(home, ["localhost", "127.0.0.1"])
     os.environ["FAKE_SPLUNKD_CA"] = str(tls["ca"])
+    # AI Toolkit verifies the agent runtime with certifi plus the OS trust
+    # store; the test CA plays the org CA the real search head's cert chains to.
+    os.environ["SSL_CERT_FILE"] = str(tls["ca"])
     return home
 
 
@@ -87,5 +92,10 @@ def aitk(splunk_home):
     # running under it; the test interpreter stands in for Splunk's Python.
     bouncer.SPLUNK_PYTHON_PATH = sys.executable
 
-    return types.SimpleNamespace(util=importlib.import_module("util.ai_commander_util"))
+    return types.SimpleNamespace(
+        util=importlib.import_module("util.ai_commander_util"),
+        agent_manager=importlib.import_module("agent_manager.agent_manager"),
+        agent_status=importlib.import_module("processors.AgentStatusProcessor"),
+        ai_agent=importlib.import_module("processors.AiAgentProcessor"),
+    )
 
