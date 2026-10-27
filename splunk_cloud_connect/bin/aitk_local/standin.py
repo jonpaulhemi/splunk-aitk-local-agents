@@ -6,34 +6,23 @@ https://{tenantApiHostname}/{tenantName}/slim-api/v1alpha1. We answer with
 this search head and a tenant name that routes that URL to our runtime.
 """
 
-from aitk_local import config, credentials, log, splunkd
+from aitk_local import config, credentials, splunkd
 
 # https://host:port/services/aitk_local/slim-api/v1alpha1 → this app's runtime.
 TENANT_NAME = "services/aitk_local"
 AITK_CONNECTION = "splunk_ml_toolkit"
-# Like the real Cloud Connect, only admins may read the details. AI Toolkit
-# calls with the system token, and relays for its non-admin users itself.
-REQUIRED_CAPABILITY = "admin_all_objects"
 
 
 def handle(request):
-    try:
-        return _handle(request)
-    except splunkd.SplunkdError as e:
-        log.get_logger().error("Cloud Connect lookup failed: %s", e)
-        return {
-            "status": 503,
-            "payload": {"message": "Local agent runtime unavailable: credential store or splunkd error"},
-        }
-
-
-def _handle(request):
     if request["method"] != "GET" or request.get("path_info", "").strip("/") != AITK_CONNECTION:
         return {"status": 404, "payload": {"message": "Not found"}}
 
-    rest_uri = request["server"]["rest_uri"]
-    if REQUIRED_CAPABILITY not in splunkd.capabilities(rest_uri, request["session"]["authtoken"]):
+    # Like the real Cloud Connect, only admins may read the details. AI Toolkit
+    # calls with the system token, and relays for its non-admin users itself.
+    if not splunkd.is_admin(request):
         return {"status": 403, "payload": {"message": "Insufficient permissions"}}
+
+    rest_uri = request["server"]["rest_uri"]
 
     token = credentials.runtime_token(rest_uri, request["system_authtoken"])
     return {

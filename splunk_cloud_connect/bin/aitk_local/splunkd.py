@@ -39,3 +39,9 @@ def capabilities(rest_uri, token):
     if status != 200:
         raise SplunkdError(status, "current-context lookup failed")
     return set(body["entry"][0]["content"].get("capabilities", []))
+
+
+def is_admin(request):
+    """Whether the calling user holds admin_all_objects."""
+    caps = capabilities(request["server"]["rest_uri"], request["session"]["authtoken"])
+    return "admin_all_objects" in caps

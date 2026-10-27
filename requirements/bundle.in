@@ -1,0 +1,8 @@
+# Libraries the local agent runtime needs inside splunkd (ticket #15).
+# Edit this, then regenerate bundle.lock with: python tools/bundle.py lock
+langgraph
+langgraph-checkpoint-sqlite
+langchain-core
+langchain-aws
+langchain-openai
+langchain-mcp-adapters

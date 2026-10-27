@@ -23,9 +23,23 @@ curl -sk -u admin "https://localhost:8089/servicesNS/admin/Splunk_ML_Toolkit/mlt
 
 Failures are logged to `$SPLUNK_HOME/var/log/splunk/aitk_local.log`.
 
+## Building the package
+
+The agent libraries (LangGraph, LangChain, MCP adapters and their dependencies) ship inside the app in `splunk_cloud_connect/lib/`, so nothing is installed on the search head. They are pinned with hashes in `requirements/bundle.lock`, always as CPython 3.13 manylinux x86_64 wheels, and aren't committed.
+
+```
+python tools/bundle.py build      # lib/ from bundle.lock (needs PyPI access)
+python tools/bundle.py package    # dist/splunk_cloud_connect-<version>.tgz
+```
+
+To change the library set, edit `requirements/bundle.in`, then run `lock`, `build` and `inventory` (which rewrites [`docs/bundled-libraries.md`](docs/bundled-libraries.md): licenses, compiled packages, sizes).
+
+After installing, `GET /services/aitk_local/diagnostics` (admin only) imports every bundled library inside splunkd, runs a one-step checkpointed graph, and reports the Python version and any library that was loaded from outside `lib/`.
+
 ## Layout
 
 - `splunk_cloud_connect/`: the Splunk app itself.
+- `requirements/`, `tools/bundle.py`: the bundled-library build.
 - `tests/`: contract tests that run AI Toolkit's own client code against this app's handlers, served by a fake splunkd.
 - `spike/`: throwaway spike from #2, kept for re-running on other Splunk versions.
 
@@ -43,6 +57,7 @@ AI Toolkit is proprietary and is never committed here. Unpack `splunk-ai-toolkit
 ```
 python3.13 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
+python tools/bundle.py build
 AITK_APP=/path/to/Splunk_ML_Toolkit pytest
 ```
 
