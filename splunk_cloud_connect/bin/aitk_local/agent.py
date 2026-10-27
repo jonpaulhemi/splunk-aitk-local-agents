@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+import traceback
 
 from aitk_local import llm, log
 
@@ -43,6 +44,7 @@ def run(payload):
         outcome = _completed(False, error=f"Agent timed out after {timeout}s")
     except Exception as e:
         outcome = _completed(False, error=_llm_error(e))
+        logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
         "invoke completed %s model=%s provider=%s success=%s duration=%.1fs%s",
         ids, block.get("model"), block.get("provider"), outcome["success"], time.monotonic() - started,
@@ -61,6 +63,17 @@ def _has_content(value):
     if isinstance(value, dict):
         return any(_has_content(v) for v in value.values())
     return bool(value)
+
+
+def _where(e):
+    """Where the root cause was raised: exception types and frames, without the
+    exception text, which can echo the request."""
+    chain = [e]
+    while (cause := chain[-1].__cause__ or chain[-1].__context__) and len(chain) < 10:
+        chain.append(cause)
+    frames = traceback.extract_tb(chain[-1].__traceback__)[-6:]
+    causes = " <- ".join(type(c).__name__ for c in chain)
+    return causes + "\n" + "".join(f"  {f.filename}:{f.lineno} in {f.name}\n" for f in frames)
 
 
 def _llm_error(e):

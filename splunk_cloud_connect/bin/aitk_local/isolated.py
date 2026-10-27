@@ -51,4 +51,13 @@ def run(handler_name, in_string):
 def _worker_env():
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
     env["LANGSMITH_TRACING"] = "false"
+    # splunkd's environment can name a CA file or dir that doesn't exist. AI
+    # Toolkit drops these when its modules load, so whether a handler process
+    # still has them is luck; with them, every TLS client in the worker fails
+    # with FileNotFoundError (seen live on 0.4.0).
+    for name in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE"):
+        path = env.get(name)
+        if path is not None and not os.path.exists(path):
+            log.get_logger().warning("ignoring %s: %s does not exist", name, path)
+            del env[name]
     return env

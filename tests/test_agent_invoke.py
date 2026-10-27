@@ -94,7 +94,24 @@ def test_rows_run_in_parallel_and_each_gets_its_own_answer(aitk, splunkd, admin,
     assert llm.max_in_flight > 1
 
 
-def test_model_error_comes_back_as_a_failed_row(aitk, splunkd, admin, llm):
+def test_a_stale_ssl_cert_file_in_splunkds_environment_does_not_break_runs(aitk, splunkd, admin, llm, monkeypatch, splunk_home):
+    # Live on 0.4.0: splunkd's environment can carry SSL_CERT_FILE pointing at a
+    # missing file. AI Toolkit drops it when its modules load, so only some
+    # handler processes still had it, and their rows failed with FileNotFoundError.
+    llm.script = lambda request: "fine"
+    agent = _agent(aitk, splunkd, admin)
+    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cacert.pem")
+    monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
+
+    df = _run(aitk, splunkd, admin, agent, _llm_block(llm), "hi", [{"x": 1}])
+
+    assert df.iloc[0]["status"] == "success", df.iloc[0].get("error")
+    assert df.iloc[0]["result_1"] == "fine"
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert "ignoring SSL_CERT_FILE: /nonexistent/cacert.pem does not exist" in log
+
+
+def test_model_error_comes_back_as_a_failed_row(aitk, splunkd, admin, llm, splunk_home):
     llm.script = lambda request: (500, {"error": {"message": "model exploded"}})
     agent = _agent(aitk, splunkd, admin)
 
@@ -104,6 +121,9 @@ def test_model_error_comes_back_as_a_failed_row(aitk, splunkd, admin, llm):
     assert "LLM call failed" in df.iloc[0]["error"]
     assert "HTTP 500" in df.iloc[0]["error"]
     assert "model exploded" not in df.iloc[0]["error"]
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert "failed at:" in log and "HTTPStatusError" in log
+    assert "model exploded" not in log
 
 
 def test_agent_timeout_bounds_the_whole_run(aitk, splunkd, admin, llm):
