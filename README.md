@@ -16,7 +16,8 @@ After installing and restarting splunkd, run these as an admin. `| rest` can't p
 # The stand-in: expect 200, status "activated", tenantName "services/aitk_local"
 curl -sk -u admin "https://localhost:8089/servicesNS/nobody/splunk_cloud_connect/v1alpha1/cloud-connection/splunk_ml_toolkit?output_mode=json" | sed -E 's/"token":"[^"]*"/"token":"REDACTED"/'
 
-# AI Toolkit's relay for non-admin users: expect 200 with the same tenant
+# AI Toolkit's relay: expect 200 with the same tenant. The caller needs
+# apply_ai_commander_command (e.g. AI Toolkit's mltk_admin role), else 403.
 curl -sk -u admin "https://localhost:8089/servicesNS/admin/Splunk_ML_Toolkit/mltk/cloud_connect_details?output_mode=json" | sed -E 's/"scs_token":"[^"]*"/"scs_token":"REDACTED"/'
 ```
 
