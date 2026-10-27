@@ -62,16 +62,14 @@ STANDIN = "/servicesNS/nobody/splunk_cloud_connect/v1alpha1/cloud-connection/spl
 
 
 def test_non_admin_cannot_read_the_token_directly(aitk, splunkd):
-    from splunk import rest
+    from splunk import RESTException, rest
 
     analyst = splunkd.add_user("analyst", ["apply_ai_commander_command"])
 
-    response, content = rest.simpleRequest(
-        STANDIN, sessionKey=analyst, getargs={"output_mode": "json"}
-    )
+    with pytest.raises(RESTException) as refused:
+        rest.simpleRequest(STANDIN, sessionKey=analyst, getargs={"output_mode": "json"})
 
-    assert response.status == 403
-    assert b"token" not in content
+    assert refused.value.statusCode == 403
     assert splunkd.passwords == {}
 
 
@@ -116,3 +114,28 @@ def test_broken_credential_store_is_reported_not_crashed(aitk, splunkd, admin):
 
     assert response.status == 503
     assert b"credential store" in content
+
+
+def test_credential_store_refusal_is_reported_not_crashed(aitk, splunkd, admin):
+    # Real splunk.rest.simpleRequest raises on 401/403 even with raiseAllErrors=False.
+    from splunk import rest
+
+    splunkd.users["splunk-system-user"].capabilities = ["admin_all_objects"]
+
+    response, content = rest.simpleRequest(STANDIN, sessionKey=admin, getargs={"output_mode": "json"})
+
+    assert response.status == 503
+    assert b"credential store" in content
+
+
+def test_unexpected_failure_still_returns_a_reply_and_is_logged(aitk, splunkd, admin, runtime_conf, splunk_home):
+    from splunk import rest
+
+    runtime_conf.write_text("[runtime]\nadvertised_host = a\nadvertised_host = b\n")
+
+    response, content = rest.simpleRequest(STANDIN, sessionKey=admin, getargs={"output_mode": "json"})
+
+    assert response.status == 500
+    assert b"Local agent runtime error" in content
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert "Traceback" in log

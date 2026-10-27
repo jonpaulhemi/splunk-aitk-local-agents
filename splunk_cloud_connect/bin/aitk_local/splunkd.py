@@ -2,7 +2,7 @@
 
 import json
 
-from splunk import rest
+from splunk import RESTException, rest
 
 APP = "splunk_cloud_connect"
 
@@ -15,14 +15,18 @@ class SplunkdError(RuntimeError):
 
 def call(rest_uri, token, method, path, postargs=None):
     """Make a REST call as `token` and return (status, parsed JSON or None)."""
-    response, content = rest.simpleRequest(
-        f"{rest_uri}{path}",
-        sessionKey=token,
-        method=method,
-        postargs=postargs,
-        getargs={"output_mode": "json"},
-        raiseAllErrors=False,
-    )
+    try:
+        response, content = rest.simpleRequest(
+            f"{rest_uri}{path}",
+            sessionKey=token,
+            method=method,
+            postargs=postargs,
+            getargs={"output_mode": "json"},
+            raiseAllErrors=False,
+        )
+    except RESTException as e:
+        # simpleRequest raises on 401/403 even with raiseAllErrors=False.
+        return e.statusCode, None
     try:
         body = json.loads(content) if content else None
     except ValueError:

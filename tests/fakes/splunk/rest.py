@@ -58,6 +58,7 @@ def simpleRequest(
         with urllib.request.urlopen(req, context=_context(), timeout=timeout or 60) as r:
             return _Response(r.status, dict(r.headers)), r.read()
     except urllib.error.HTTPError as e:
-        if raiseAllErrors:
+        # Like the real one, 401 and 403 raise whatever raiseAllErrors says.
+        if raiseAllErrors or e.code in (401, 403):
             raise RESTException(e.code, e.reason)
         return _Response(e.code, dict(e.headers)), e.read()
