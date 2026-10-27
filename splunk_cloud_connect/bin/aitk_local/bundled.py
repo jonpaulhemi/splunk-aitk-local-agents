@@ -45,8 +45,11 @@ def shadowed():
     """Loaded modules that lib/ provides but that came from somewhere else."""
     provided = set(top_level_modules())
     found = []
-    for name, module in list(sys.modules.items()):
+    for module in list(sys.modules.values()):
+        # By the module's own name: requests registers Splunk's chardet under
+        # requests.packages.chardet aliases, which isn't lib/'s requests shadowed.
+        name = getattr(module, "__name__", "")
         path = getattr(module, "__file__", None)
         if name.split(".")[0] in provided and path and not os.path.abspath(path).startswith(LIB + os.sep):
             found.append(name)
-    return sorted(found)
+    return sorted(set(found))

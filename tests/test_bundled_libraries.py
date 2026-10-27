@@ -61,3 +61,17 @@ def test_diagnostics_are_admin_only(splunkd):
         _get(analyst)
 
     assert refused.value.statusCode == 403
+
+
+def test_aliases_of_splunks_own_packages_are_not_reported_as_shadowing(splunkd, admin, monkeypatch):
+    # Seen live: requests registers Splunk's chardet as requests.packages.chardet.
+    import sys
+    import types
+
+    chardet = types.ModuleType("chardet")
+    chardet.__file__ = "/opt/splunk/lib/python3.13/site-packages/chardet/__init__.py"
+    monkeypatch.setitem(sys.modules, "requests.packages.chardet", chardet)
+
+    _, report = _get(admin)
+
+    assert "requests.packages.chardet" not in report["shadowed"]
