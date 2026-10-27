@@ -21,11 +21,17 @@ def _db_path():
     return os.path.join(directory, "runtime.db")
 
 
+_schema_ready = False
+
+
 @contextlib.contextmanager
 def _connect():
+    global _schema_ready
     db = sqlite3.connect(_db_path(), timeout=30, isolation_level=None)
     try:
-        _ensure_schema(db)
+        if not _schema_ready:
+            _ensure_schema(db)
+            _schema_ready = True
         yield db
     finally:
         db.close()
@@ -65,14 +71,12 @@ def delete(runtime_id):
         return db.execute("DELETE FROM runtimes WHERE runtime_id = ?", (runtime_id,)).rowcount > 0
 
 
-def runtime_status(runtime_id):
-    return READY if _exists("runtime_id", runtime_id) else NOT_FOUND
-
-
-def memory_status(memory_id):
-    return ACTIVE if _exists("memory_id", memory_id) else NOT_FOUND
-
-
-def _exists(column, value):
+def statuses(runtime_ids, memory_ids):
+    """({runtime_id: ready|not_found}, {memory_id: active|not_found})."""
     with _connect() as db:
-        return db.execute(f"SELECT 1 FROM runtimes WHERE {column} = ?", (value,)).fetchone() is not None
+        live = {r for (r,) in db.execute("SELECT runtime_id FROM runtimes")} if runtime_ids else set()
+        mems = {m for (m,) in db.execute("SELECT memory_id FROM runtimes")} if memory_ids else set()
+    return (
+        {i: READY if i in live else NOT_FOUND for i in runtime_ids},
+        {i: ACTIVE if i in mems else NOT_FOUND for i in memory_ids},
+    )

@@ -16,6 +16,11 @@ def runtime_token(rest_uri, system_token):
     return _get_or_create(rest_uri, system_token, TOKEN_NAME, lambda: secrets.token_urlsafe(32))
 
 
+def existing_runtime_token(rest_uri, system_token):
+    """The runtime token if one has been generated, else None. Never creates it."""
+    return _read(rest_uri, system_token, TOKEN_NAME)
+
+
 def rsa_private_key_der(rest_uri, system_token):
     """DER bytes of the runtime's RSA key; AI Toolkit encrypts invoke salts to it."""
     stored = _get_or_create(rest_uri, system_token, RSA_KEY_NAME, _new_rsa_key)

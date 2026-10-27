@@ -76,14 +76,58 @@ def test_delete_then_status_polling_removes_the_agent(aitk, splunkd, admin, mana
     assert _stored(splunkd, "triage") is None
 
 
-def test_runtimes_survive_a_restart_of_the_handler_processes(aitk, splunkd, admin, manager):
-    manager.create_agent({"name": "triage"})
-    splunkd.load_routes()  # new handler instances, as after a splunkd restart
+def test_runtime_records_are_visible_to_other_handler_processes(splunkd, manager, splunk_home):
+    # splunkd runs each request in whichever handler process is free; the fake
+    # runs them all in this one, so look from a separate process.
+    import os
+    import subprocess
+    import sys
 
-    processor = _status_processor(aitk, splunkd, admin, "triage", "create")
+    manager.create_agent({"name": "triage"})
+    runtime_id = _stored(splunkd, "triage")["details"]["versions"][0]["runtime_params"]["runtime_id"]
+
+    bin_dir = splunk_home / "etc" / "apps" / "splunk_cloud_connect" / "bin"
+    seen = subprocess.run(
+        [sys.executable, "-c", "import sys; from aitk_local import records; "
+         "print(records.statuses([sys.argv[1]], [])[0][sys.argv[1]])", runtime_id],
+        env={**os.environ, "PYTHONPATH": str(bin_dir)}, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    assert seen == "ready"
+
+
+def test_deleting_an_unknown_runtime_still_lets_launchpad_drop_the_agent(aitk, splunkd, admin, manager):
+    manager.create_agent({"name": "triage"})
+    doc = _stored(splunkd, "triage")
+    doc["details"]["versions"][0]["runtime_params"]["runtime_id"] = "aitk_local_gone"
+    splunkd.kvstore[("Splunk_ML_Toolkit", AGENTS)][doc["_key"]] = doc
+
+    ok, _ = manager.delete_agent("triage", notify_runtime=True)
+    processor = _status_processor(aitk, splunkd, admin, "triage", "delete")
     processor.process()
 
-    assert processor.df.iloc[0]["status"] == "created"
+    assert ok is True
+    assert _stored(splunkd, "triage") is None
+
+
+@pytest.mark.parametrize("body", ["not json", "[1, 2]"])
+def test_malformed_create_body_is_a_client_error(aitk, splunkd, admin, body):
+    token = _runtime_token(aitk, splunkd, admin)
+
+    response = httpx.post(
+        f"{runtime_base_url(splunkd)}/agent/aws_agentcore", content=body,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_calls_before_any_token_exists_are_refused_without_creating_one(splunkd):
+    response = httpx.get(f"{runtime_base_url(splunkd)}/encryption/public-key",
+                         headers={"Authorization": "Bearer guess"})
+
+    assert response.status_code == 401
+    assert splunkd.passwords == {}
 
 
 def test_unknown_runtime_reports_not_found(aitk, splunkd, admin):

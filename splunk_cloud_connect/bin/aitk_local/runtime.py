@@ -20,12 +20,16 @@ import urllib.parse
 from aitk_local import credentials, records
 
 UNAUTHORIZED = {"status": 401, "payload": {"message": "Unauthorized"}}
-NOT_FOUND = {"status": 404, "payload": {"message": "Not found"}}
+NO_SUCH_CALL = {"status": 404, "payload": {"message": "Not found"}}
+BAD_BODY = {"status": 400, "payload": {"message": "Request body must be a JSON object"}}
 
 
 def handle(request):
     rest_uri, system_token = request["server"]["rest_uri"], request["system_authtoken"]
-    if not _authorized(request, credentials.runtime_token(rest_uri, system_token)):
+    # Anonymous callers reach this handler, so only read the token: until the
+    # stand-in has issued one, nothing can authenticate.
+    token = credentials.existing_runtime_token(rest_uri, system_token)
+    if token is None or not _authorized(request, token):
         return UNAUTHORIZED
 
     method = request["method"]
@@ -33,14 +37,23 @@ def handle(request):
     query = _query(request)
 
     if path == ["agent", "aws_agentcore"] and method == "POST":
-        return _create(json.loads(request.get("payload") or "{}"))
+        body = _json_object(request.get("payload"))
+        return BAD_BODY if body is None else _create(body)
     if path == ["agent", "aws_agentcore"] and method == "GET":
         return _status(query)
     if len(path) == 3 and path[:2] == ["agent", "aws_agentcore"] and method == "DELETE":
         return _delete(path[2])
     if path == ["encryption", "public-key"] and method == "GET":
         return {"status": 200, "payload": {"public_key": _public_key_pem(rest_uri, system_token)}}
-    return NOT_FOUND
+    return NO_SUCH_CALL
+
+
+def _json_object(payload):
+    try:
+        body = json.loads(payload or "{}")
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
 
 
 def _authorized(request, token):
@@ -70,19 +83,21 @@ def _create(body):
 def _status(query):
     runtime_ids = [i for i in query.get("runtime_ids", "").split(",") if i]
     memory_ids = [i for i in query.get("memory_ids", "").split(",") if i]
+    runtimes, memories = records.statuses(runtime_ids, memory_ids)
     return {
         "status": 200,
         "payload": {
-            "agents": [{"runtime_id": i, "status": records.runtime_status(i)} for i in runtime_ids],
-            "memories": [{"memory_id": i, "status": records.memory_status(i)} for i in memory_ids],
+            "agents": [{"runtime_id": i, "status": runtimes[i]} for i in runtime_ids],
+            "memories": [{"memory_id": i, "status": memories[i]} for i in memory_ids],
         },
     }
 
 
 def _delete(runtime_id):
-    if not records.delete(runtime_id):
-        return {"status": 404, "payload": {"runtime_id": runtime_id, "status": records.NOT_FOUND}}
-    return {"status": 200, "payload": {"runtime_id": runtime_id, "status": "DELETED"}}
+    # An unknown runtime is already gone. AI Toolkit treats anything but
+    # 200/202/204 as failure and would then never drop the agent from KV store.
+    status = "DELETED" if records.delete(runtime_id) else "NOT_FOUND"
+    return {"status": 200, "payload": {"runtime_id": runtime_id, "status": status}}
 
 
 @functools.cache
