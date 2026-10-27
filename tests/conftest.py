@@ -34,6 +34,8 @@ def pytest_configure(config):
             "Set AITK_APP to an unpacked AI Toolkit 6.2.0 app directory (Splunk_ML_Toolkit)."
         )
     sys.path.insert(0, str(FAKES))
+    # Handlers that run in a worker process need the fake `splunk` package too.
+    os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(FAKES), os.environ.get("PYTHONPATH")]))
 
 
 @pytest.fixture(scope="session")

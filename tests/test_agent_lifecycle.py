@@ -165,6 +165,29 @@ def test_every_call_needs_the_runtime_token(aitk, splunkd, admin, auth, method, 
     assert response.status_code == 401
 
 
+def test_runtime_is_unaffected_by_libraries_ai_toolkit_loads_into_the_shared_process(
+    aitk, splunkd, admin, tmp_path, monkeypatch
+):
+    # Seen live: splunkd runs our handlers in the same process as AI Toolkit's,
+    # which puts the PSC add-on's site-packages (with a cryptography built for
+    # another OpenSSL) first on sys.path.
+    import sys
+
+    broken = tmp_path / "psc_site_packages" / "cryptography"
+    broken.mkdir(parents=True)
+    (broken / "__init__.py").write_text("raise ImportError('PSC cryptography: undefined symbol')\n")
+    monkeypatch.syspath_prepend(str(broken.parent))
+    for name in [m for m in sys.modules if m == "cryptography" or m.startswith("cryptography.")]:
+        monkeypatch.delitem(sys.modules, name)
+    token = _runtime_token(aitk, splunkd, admin)
+
+    response = httpx.get(f"{runtime_base_url(splunkd)}/encryption/public-key",
+                         headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert "BEGIN PUBLIC KEY" in response.json()["public_key"]
+
+
 def test_public_key_is_accepted_by_aitk_salt_encryption_and_is_stable(aitk, splunkd, admin):
     processor = aitk.ai_agent.AiAgentProcessor.__new__(aitk.ai_agent.AiAgentProcessor)
     processor.searchinfo = searchinfo(splunkd, admin)

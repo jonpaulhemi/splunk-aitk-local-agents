@@ -40,16 +40,9 @@ def test_every_bundled_library_imports_and_a_checkpointed_graph_runs(splunkd, ad
 
 
 def test_bundled_libraries_win_over_anything_already_on_the_path(splunkd, admin):
-    import sys
-
-    # The fake splunkd runs handlers in this test process, which has already
-    # loaded some of the same packages (cryptography, httpx...). Only those may
-    # be reported as coming from outside lib/; the live run expects none.
-    preloaded = {name.split(".")[0] for name in sys.modules}
-
     _, report = _get(admin)
 
-    assert {name.split(".")[0] for name in report["shadowed"]} <= preloaded
+    assert report["shadowed"] == []
 
 
 def test_diagnostics_are_admin_only(splunkd):
