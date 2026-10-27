@@ -4,3 +4,13 @@ Splunk app (app id `splunk_cloud_connect`) that replaces Cloud Connect + Splunk'
 
 - Never modify AI Toolkit (`Splunk_ML_Toolkit`) code; this app is an overlay.
 - Build tickets live in this repo's GitHub Issues.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in this repo's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
