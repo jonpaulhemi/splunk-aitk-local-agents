@@ -25,7 +25,7 @@ def call(rest_uri, token, method, path, postargs=None):
             raiseAllErrors=False,
         )
     except RESTException as e:
-        # simpleRequest raises on 401/403 even with raiseAllErrors=False.
+        # simpleRequest raises on 401/403/404 even with raiseAllErrors=False.
         return e.statusCode, None
     try:
         body = json.loads(content) if content else None
