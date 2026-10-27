@@ -3,3 +3,6 @@ cryptography
 httpx
 requests
 splunk-sdk
+pandas
+boto3
+pydantic

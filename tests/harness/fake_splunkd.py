@@ -89,6 +89,7 @@ class FakeSplunkd:
         self.system_token = self.login(SYSTEM_USER)
         self.passwords = {}  # (app, realm, name) -> clear password
         self.fail_credential_store = False  # simulate a broken storage/passwords
+        self.kvstore = {}  # (app, collection) -> {_key: document}
         self.routes = []
         self._lock = threading.Lock()
         self._server = None
@@ -316,6 +317,9 @@ class FakeSplunkd:
         if rest[:2] == ["storage", "passwords"] and ns_app:
             return self._passwords(method, rest[2:], body, user, ns_app)
 
+        if rest[:3] == ["storage", "collections", "data"] and len(rest) >= 4 and ns_app:
+            return self._kvstore(method, rest[3], rest[4:], query, body, ns_app)
+
         return NOT_FOUND
 
     def _capabilities(self, user):
@@ -342,6 +346,29 @@ class FakeSplunkd:
                 if key not in self.passwords:
                     return NOT_FOUND
                 return 200, {}, {"entry": [self._password_entry(key)]}
+        return NOT_FOUND
+
+    def _kvstore(self, method, collection, rest, query, body, app):
+        """Collection data: list (with an equality `query`), get, insert, update, delete."""
+        docs = self.kvstore.setdefault((app, collection), {})
+        with self._lock:
+            if not rest and method == "GET":
+                where = json.loads(dict(query).get("query") or "{}")
+                return 200, {}, [d for d in docs.values() if all(d.get(k) == v for k, v in where.items())]
+            if not rest and method == "POST":
+                doc = json.loads(body)
+                key = doc.get("_key") or secrets.token_hex(12)
+                docs[key] = {**doc, "_key": key}
+                return 201, {}, {"_key": key}
+            if len(rest) == 1 and rest[0] != "batch_save":
+                key = urllib.parse.unquote(rest[0])
+                if method == "GET":
+                    return (200, {}, docs[key]) if key in docs else NOT_FOUND
+                if method == "POST":
+                    docs[key] = {**json.loads(body), "_key": key}
+                    return 200, {}, {"_key": key}
+                if method == "DELETE":
+                    return (200, {}, "") if docs.pop(key, None) else NOT_FOUND
         return NOT_FOUND
 
     def _password_entry(self, key):
