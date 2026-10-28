@@ -1,5 +1,7 @@
 """An admin turns off AI Toolkit's own traffic to Splunk's cloud in one action (#17)."""
 
+from urllib.parse import quote
+
 import httpx
 import pytest
 
@@ -36,8 +38,6 @@ def _get(splunkd, token, path):
 
 
 def _state(splunkd, token):
-    from urllib.parse import quote
-
     return {
         "inputs_disabled": [_get(splunkd, token, f"data/inputs/{i}")["disabled"] for i in SYNC_INPUTS],
         "searches_scheduled": [
@@ -121,3 +121,39 @@ def test_get_is_not_a_way_to_run_it(splunkd, admin):
 
     assert response.status_code == 405
     assert splunkd.conf_writes == {}
+
+
+def _break(splunkd, monkeypatch, stanza, response):
+    """Make splunkd answer `response` for one saved search, as if AI Toolkit changed or broke it."""
+    real = splunkd._conf_entry
+
+    def entry(method, app, conf, name, form, view):
+        if name == stanza and (response[0] == 404 or method == "POST"):
+            return response
+        return real(method, app, conf, name, form, view)
+
+    monkeypatch.setattr(splunkd, "_conf_entry", entry)
+
+
+def test_a_search_missing_after_an_upgrade_is_reported_and_the_rest_still_applied(splunkd, admin, monkeypatch):
+    _break(splunkd, monkeypatch, TELEMETRY_SEARCHES[0], (404, {}, {}))
+
+    response = _setup(splunkd, admin)
+
+    assert response.status_code == 200
+    assert response.json()["missing"] == [f"scheduled search {TELEMETRY_SEARCHES[0]}"]
+    assert len(response.json()["changed"]) == 6
+
+
+def test_a_failed_update_stops_with_what_was_already_changed(splunkd, admin, monkeypatch):
+    _break(splunkd, monkeypatch, TELEMETRY_SEARCHES[1], (500, {}, {"messages": [{"text": "boom"}]}))
+
+    response = _setup(splunkd, admin)
+
+    assert response.status_code == 502
+    body = response.json()
+    assert "Re-run" in body["message"] and TELEMETRY_SEARCHES[1] in body["message"]
+    assert [c["setting"] for c in body["changed"]] == [
+        "input slim_agent_templates://managed_templates", "input splunk_managed_skills://catalog",
+        f"scheduled search {TELEMETRY_SEARCHES[0]}",
+    ]

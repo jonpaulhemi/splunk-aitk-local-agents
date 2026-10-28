@@ -34,24 +34,29 @@ def handle(request):
     form = dict(request.get("form") or [])
     report = _Report(request["server"]["rest_uri"], request["session"]["authtoken"])
 
-    for kind, name in SYNC_INPUTS:
-        path = f"{AITK}/data/inputs/{kind}/{quote(name, safe='')}"
-        report.setting(f"input {kind}://{name}", path, "disabled", True, lambda: report.post(f"{path}/disable"))
-    for name in TELEMETRY_SEARCHES:
-        path = f"{AITK}/saved/searches/{quote(name, safe='')}"
-        report.setting(f"scheduled search {name}", path, "is_scheduled", False,
-                       lambda: report.post(path, {"is_scheduled": "0"}))
     domains = ",".join(d.strip() for d in form.get("allowed_domains", "").split(",") if d.strip())
-    if domains:
-        report.setting("allowed domains", ALLOWLIST, "allowed_domains", domains,
-                       lambda: report.post(ALLOWLIST, {"allowed_domains": domains}))
-        report.setting("allowed domains enforcement", ALLOWLIST, "enforce_domain_validation", "true",
-                       lambda: report.post(ALLOWLIST, {"enforce_domain_validation": "true"}))
+    try:
+        for kind, name in SYNC_INPUTS:
+            path = f"{AITK}/data/inputs/{kind}/{quote(name, safe='')}"
+            report.setting(f"input {kind}://{name}", path, "disabled", True, f"{path}/disable", {})
+        for name in TELEMETRY_SEARCHES:
+            path = f"{AITK}/saved/searches/{quote(name, safe='')}"
+            report.setting(f"scheduled search {name}", path, "is_scheduled", False, path, {"is_scheduled": "0"})
+        if domains:
+            report.setting("allowed domains", ALLOWLIST, "allowed_domains", domains,
+                           ALLOWLIST, {"allowed_domains": domains})
+            report.setting("allowed domains enforcement", ALLOWLIST, "enforce_domain_validation", "true",
+                           ALLOWLIST, {"enforce_domain_validation": "true"})
+    except splunkd.SplunkdError as e:
+        # Keep what was already changed in the reply; a re-run picks up the rest.
+        log.get_logger().error("offline setup by %s stopped: %s; changed so far %s",
+                               request["session"]["user"], e, [c["setting"] for c in report.changed])
+        return {"status": 502, "payload": {"message": f"Offline setup stopped: {e}. Re-run it once fixed.",
+                                           **report.as_dict()}}
 
     log.get_logger().info("offline setup by %s: changed %s, missing %s", request["session"]["user"],
                           [c["setting"] for c in report.changed], report.missing)
-    return {"status": 200, "payload": {"changed": report.changed, "unchanged": report.unchanged,
-                                       "missing": report.missing}}
+    return {"status": 200, "payload": report.as_dict()}
 
 
 class _Report:
@@ -59,8 +64,9 @@ class _Report:
         self.rest_uri, self.token = rest_uri, token
         self.changed, self.unchanged, self.missing = [], [], []
 
-    def setting(self, label, path, key, wanted, apply):
-        """Bring `key` of the entity at `path` to `wanted`, recording what happened."""
+    def setting(self, label, path, key, wanted, update_path, update_form):
+        """Bring `key` of the entity at `path` to `wanted` by POSTing `update_form`
+        to `update_path`, recording what happened."""
         status, body = splunkd.call(self.rest_uri, self.token, "GET", path)
         if status == 404:
             self.missing.append(label)  # e.g. renamed in a later AI Toolkit
@@ -71,13 +77,13 @@ class _Report:
         if _same(current, wanted):
             self.unchanged.append(label)
             return
-        apply()
+        status, _ = splunkd.call(self.rest_uri, self.token, "POST", update_path, postargs=update_form)
+        if status not in (200, 201):
+            raise splunkd.SplunkdError(status, f"updating {label} failed")
         self.changed.append({"setting": label, "from": _shown(current), "to": _shown(wanted)})
 
-    def post(self, path, form=None):
-        status, _ = splunkd.call(self.rest_uri, self.token, "POST", path, postargs=form or {})
-        if status not in (200, 201):
-            raise splunkd.SplunkdError(status, f"updating {path} failed")
+    def as_dict(self):
+        return {"changed": self.changed, "unchanged": self.unchanged, "missing": self.missing}
 
 
 def _same(current, wanted):
