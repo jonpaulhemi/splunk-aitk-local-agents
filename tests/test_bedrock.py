@@ -112,6 +112,43 @@ def test_a_connection_without_region_or_keys_fails_before_calling_aws(aitk, splu
     assert bedrock.converse_calls == [] and bedrock.assume_role_calls == []
 
 
+def test_agent_timeout_bounds_a_bedrock_run_even_with_long_request_timeouts(aitk, splunkd, admin, bedrock):
+    import time
+
+    # Bedrock calls run in threads asyncio can't cancel, and AI Toolkit's
+    # default request_timeout is 600s; the run must still end at agent_timeout.
+    bedrock.delay = 30
+    agent = create_agent(aitk, splunkd, admin, agent_timeout=2)
+
+    started = time.monotonic()
+    df = run_aiagent(aitk, splunkd, admin, agent, _bedrock_block(request_timeout=600), "hi", [{"x": 1}])
+
+    assert df.iloc[0]["status"] == "error"
+    assert "timed out after 2s" in df.iloc[0]["error"]
+    assert time.monotonic() - started < 15
+
+
+def test_a_malformed_region_is_named_in_the_error(aitk, splunkd, admin, bedrock):
+    agent = create_agent(aitk, splunkd, admin)
+
+    df = run_aiagent(aitk, splunkd, admin, agent, _bedrock_block(aws_region="US Gov West"), "hi", [{"x": 1}])
+
+    assert df.iloc[0]["status"] == "error"
+    assert "region 'US Gov West'" in df.iloc[0]["error"]
+    assert bedrock.converse_calls == []
+
+
+def test_a_rejected_role_is_a_clear_failure(aitk, splunkd, admin, bedrock):
+    agent = create_agent(aitk, splunkd, admin)
+    bedrock.reject_key_ids.add(KEY_ID)
+
+    df = run_aiagent(aitk, splunkd, admin, agent, _bedrock_block(aws_role_arn=ROLE), "hi", [{"x": 1}])
+
+    assert df.iloc[0]["status"] == "error"
+    assert "InvalidClientTokenId" in df.iloc[0]["error"]
+    assert bedrock.converse_calls == []
+
+
 def test_bedrock_connection_maps_onto_chatbedrockconverse(splunk_home):
     import sys
 

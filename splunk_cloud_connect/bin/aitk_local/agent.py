@@ -34,9 +34,7 @@ def run(payload):
         timeout = _timeout(payload.get("agent_timeout"))
         if "hitl_response" in payload:
             raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
-        response = asyncio.run(
-            asyncio.wait_for(_answer(llm.chat_model(block), payload), timeout=timeout)
-        )
+        response = _within(timeout, _answer(block, payload))
         outcome = _completed(True, response)
     except (llm.UnusableConnection, NotSupported) as e:
         outcome = _completed(False, error=str(e))
@@ -88,9 +86,25 @@ def _llm_error(e):
     return f"LLM call failed: {name}" + (f" (HTTP {status})" if status else "")
 
 
-async def _answer(model, payload):
+def _within(seconds, coroutine):
+    """Run `coroutine`, raising TimeoutError after `seconds` even if it left
+    threads behind (Bedrock calls run in threads asyncio can't cancel).
+
+    asyncio.run would wait for those threads at shutdown; closing the loop
+    doesn't, and the worker process exits right after replying.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(asyncio.wait_for(coroutine, timeout=seconds))
+    finally:
+        loop.close()
+
+
+async def _answer(block, payload):
     from langgraph.prebuilt import create_react_agent
 
+    # Building a Bedrock model may call STS, so it counts against the timeout.
+    model = await asyncio.to_thread(llm.chat_model, block)
     graph = create_react_agent(model, tools=[], prompt=payload.get("system_prompt") or None)
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]})
     return state["messages"][-1].text

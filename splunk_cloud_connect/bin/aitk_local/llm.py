@@ -8,10 +8,13 @@ request_timeout and reasoning_effort:
   aws_access_token (the secret key) and aws_role_arn (optional)
 """
 
+import re
+
 CUSTOM = "Custom"
 BEDROCK = "Bedrock"
 # AI Toolkit's own Bedrock calls use this session name when assuming the role.
 ROLE_SESSION_NAME = "splunk-ai-commander-session-name"
+REGION = re.compile(r"[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-\d+")
 
 
 class UnusableConnection(ValueError):
@@ -52,11 +55,15 @@ def _bedrock(block):
     secret = block.get("aws_access_token")
     if not (region and key_id and secret):
         raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key")
+    if not REGION.fullmatch(region):
+        raise UnusableConnection(f"The Bedrock connection's region '{region}' isn't an AWS region name "
+                                 "such as us-gov-west-1")
     from botocore.config import Config
     from langchain_aws import ChatBedrockConverse
 
     timeout = block.get("request_timeout") or 60
-    config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"max_attempts": 2})
+    # agent.run bounds the whole run; these bound each call.
+    config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 2})
     credentials = {"aws_access_key_id": key_id, "aws_secret_access_key": secret, "aws_session_token": None}
     if block.get("aws_role_arn"):
         credentials = _assumed_role(region, key_id, secret, block["aws_role_arn"], config)

@@ -12,6 +12,7 @@ import json
 import re
 import socketserver
 import threading
+import time
 import urllib.parse
 
 ROLE_KEY_ID = "ASIAFAKEROLEKEY00001"
@@ -25,6 +26,7 @@ class FakeBedrock:
         self.converse_calls = []  # {"model", "key_id", "region", "session_token", "body"}
         self.assume_role_calls = []  # {"key_id", "region", "form"}
         self.reject_key_ids = set()  # answered like an invalid security token
+        self.delay = 0.0  # seconds before each Converse answer
         self._lock = threading.Lock()
         self._server = None
 
@@ -44,6 +46,9 @@ class FakeBedrock:
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 key_id, region, service = _scope(self.headers.get("Authorization", ""))
+                if key_id in fake.reject_key_ids and service == "sts":
+                    return self._send(403, "text/xml", _sts_error("InvalidClientTokenId",
+                                                                  "The security token included in the request is invalid."))
                 if key_id in fake.reject_key_ids:
                     return self._error(403, "UnrecognizedClientException",
                                        "The security token included in the request is invalid.")
@@ -61,10 +66,14 @@ class FakeBedrock:
                         "model": urllib.parse.unquote(match.group(1)), "key_id": key_id, "region": region,
                         "session_token": self.headers.get("X-Amz-Security-Token"), "body": body,
                     })
+                time.sleep(fake.delay)
                 answer = fake.script(body)
                 if isinstance(answer, tuple):
                     return self._error(*answer)
-                return self._send(200, "application/json", json.dumps(_converse(answer)))
+                try:
+                    return self._send(200, "application/json", json.dumps(_converse(answer)))
+                except BrokenPipeError:
+                    pass  # the client gave up waiting (timeout tests)
 
             def _error(self, status, error_type, message):
                 self.send_response(status)
@@ -108,6 +117,13 @@ def _converse(text):
         "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
         "metrics": {"latencyMs": 1},
     }
+
+
+def _sts_error(code, message):
+    return f"""<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <Error><Type>Sender</Type><Code>{code}</Code><Message>{message}</Message></Error>
+  <RequestId>fake</RequestId>
+</ErrorResponse>"""
 
 
 def _assume_role_xml():
