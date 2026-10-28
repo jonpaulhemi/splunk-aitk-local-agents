@@ -11,6 +11,7 @@ import json
 import pytest
 
 from harness.aitk import create_agent, run_aiagent
+from harness.fake_bedrock import FakeBedrock, tool_use
 from harness.fake_llm import FakeLLM, last_user_message, offered_tools, tool_call, tool_results
 from harness.fake_mcp import FakeMCP
 from harness.tls import make_ca_and_server_cert
@@ -241,3 +242,82 @@ def test_logs_hold_no_mcp_credentials_arguments_or_results(aitk, splunkd, admin,
     for secret in (MCP_TOKEN, "api-key-secret-9", "index=main error", "3 events"):
         assert secret not in log
     assert last_user_message(llm.requests[0]["body"]) == "Find errors"
+
+
+OVERFLOW = "The run outgrew the model's context window after 1 tool call; ask for less data, or use a model with a larger context"
+
+
+def test_outgrowing_the_context_window_fails_clearly_and_keeps_the_trace(aitk, splunkd, admin, llm, mcp,
+                                                                         splunk_home):
+    def script(request):
+        if not tool_results(request):
+            return tool_call("search", {"query": "index=main error"})
+        return 400, {"error": {"message": "This model's maximum context length is 8192 tokens",
+                               "type": "invalid_request_error", "code": "context_length_exceeded"}}
+
+    llm.script = script
+
+    df = _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)], conversation_tool="true")
+
+    assert df.iloc[0]["status"] == "error"
+    assert df.iloc[0]["error"] == OVERFLOW
+    # A failed run's trace goes to AI Toolkit's run-failure event (run history),
+    # which the fake splunkd doesn't index; our log shows it was sent.
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert "success=False tool_calls=1" in log.splitlines()[-1]
+
+
+def test_outgrowing_bedrocks_context_window_fails_clearly(aitk, splunkd, admin, mcp, monkeypatch):
+    # Live on 0.8.0: a long Bedrock investigation ended in "ValidationException ValidationException (HTTP 400)".
+    bedrock = FakeBedrock().start()
+    monkeypatch.setenv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME", bedrock.url)
+    bedrock.script = lambda request: (
+        tool_use("search", {"query": "index=main error"}) if len(request["messages"]) == 1
+        else (400, "ValidationException", "Input is too long for requested model."))
+    block = {"llm": {"provider": "Bedrock", "model": "zai.glm-5", "request_timeout": 30,
+                     "aws_access_key_id": "AKIAFAKE0000000001", "aws_access_token": "fake-secret",
+                     "aws_region": "us-east-1"}}
+    agent = create_agent(aitk, splunkd, admin)
+    try:
+        df = run_aiagent(aitk, splunkd, admin, agent, block, "Find errors", [{"x": 1}], mcps=[_mcp_block(mcp.url)])
+    finally:
+        bedrock.stop()
+
+    assert df.iloc[0]["error"] == OVERFLOW
+
+
+def _search_big(size):
+    def script(request):
+        if not tool_results(request):
+            return tool_call("search", {"query": f"big {size}"})
+        return f"got {len(tool_results(request)[-1])} characters"
+    return script
+
+
+def test_large_tool_results_are_cut_before_they_reach_the_model(aitk, splunkd, admin, llm, mcp):
+    llm.script = _search_big(50000)
+
+    df = _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)], conversation_tool="true")
+
+    sent = tool_results(llm.requests[-1]["body"])[-1]
+    assert sent.startswith("e" * 16000) and not sent.startswith("e" * 16001)
+    assert sent.endswith("[Result cut to 16000 of 50000 characters to fit the model's context. "
+                         "Narrow the search or ask for fewer rows to see more.]")
+    assert json.loads(df.iloc[0]["trace"])[0]["result"] == sent
+
+
+def test_small_tool_results_are_untouched(aitk, splunkd, admin, llm, mcp):
+    llm.script = _search_big(16000)
+
+    _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)])
+
+    assert tool_results(llm.requests[-1]["body"])[-1] == "e" * 16000
+
+
+def test_the_cut_is_configurable(aitk, splunkd, admin, llm, mcp, runtime_conf):
+    runtime_conf.write_text(runtime_conf.read_text() + "\n[agent]\nmax_tool_result_chars = 100\n")
+    llm.script = _search_big(500)
+
+    _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)])
+
+    assert tool_results(llm.requests[-1]["body"])[-1].startswith("e" * 100 + "\n[Result cut to 100 of 500")

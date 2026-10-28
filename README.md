@@ -66,6 +66,10 @@ Agents use the MCP connections and tools selected on them in Agent Launchpad, ov
 - `advertised_host`: the name AI Toolkit uses to reach this search head. It must match splunkd's TLS certificate. The default is this machine's FQDN.
 - `advertised_port`: the default is splunkd's management port.
 
+`aitk_local.conf` `[agent]`:
+
+- `max_tool_result_chars`: how many characters of each tool result (such as a Splunk search's rows) the model sees. Longer results are cut, with a note telling the model so. Every result is resent on each step of a run, so this keeps long investigations inside the model's context window. The default is 16000, about 4,000 tokens.
+
 ## Running the contract tests
 
 AI Toolkit is proprietary and is never committed here. Unpack `splunk-ai-toolkit_620.tgz` somewhere and point `AITK_APP` at the `Splunk_ML_Toolkit` directory:

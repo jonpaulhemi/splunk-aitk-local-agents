@@ -22,3 +22,13 @@ def advertised_host_and_port(rest_uri):
     host = (runtime.get("advertised_host") or "").strip() or socket.getfqdn()
     port = (runtime.get("advertised_port") or "").strip() or str(urlsplit(rest_uri).port)
     return f"{host}:{port}"
+
+
+DEFAULT_MAX_TOOL_RESULT_CHARS = 16000
+
+
+def max_tool_result_chars():
+    """How much of each tool result the model sees ([agent] max_tool_result_chars)."""
+    conf = _conf()
+    value = conf.get("agent", "max_tool_result_chars", fallback="").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_MAX_TOOL_RESULT_CHARS

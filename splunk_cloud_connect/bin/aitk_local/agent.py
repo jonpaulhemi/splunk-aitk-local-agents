@@ -30,18 +30,20 @@ def run(payload):
     if ignored:
         logger.info("invoke %s: not yet supported, ignoring %s", ids, ignored)
     timeout = DEFAULT_TIMEOUT
+    # Kept on failure too, so run history shows what the agent did before it stopped.
+    trace = mcp_tools.Trace()
     try:
         timeout = _timeout(payload.get("agent_timeout"))
         if "hitl_response" in payload:
             raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
-        response, trace = _within(timeout, _answer(block, payload))
-        outcome = _completed(True, response, tool_invocations=trace)
+        response = _within(timeout, _answer(block, payload, trace))
+        outcome = _completed(True, response, tool_invocations=trace.calls)
     except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, NotSupported) as e:
-        outcome = _completed(False, error=str(e))
+        outcome = _completed(False, error=str(e), tool_invocations=trace.calls)
     except TimeoutError:
-        outcome = _completed(False, error=f"Agent timed out after {timeout}s")
+        outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls)
     except Exception as e:
-        outcome = _completed(False, error=_llm_error(e))
+        outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls)
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
         "invoke completed %s model=%s provider=%s success=%s tool_calls=%d duration=%.1fs%s",
@@ -75,16 +77,40 @@ def _where(e):
     return causes + "\n" + "".join(f"  {f.filename}:{f.lineno} in {f.name}\n" for f in frames)
 
 
-def _llm_error(e):
+def _llm_error(e, tool_calls=0):
     # The exception text can echo the request, so only its type, any AWS error
     # code, and the HTTP status go out.
+    if _is_context_overflow(e):
+        return (f"The run outgrew the model's context window after {tool_calls} tool call"
+                f"{'' if tool_calls == 1 else 's'}; ask for less data, or use a model with a larger context")
     name = type(e).__name__
     status = getattr(e, "status_code", None)
     aws = getattr(e, "response", None)
     if isinstance(aws, dict):  # botocore ClientError
-        name = f"{name} {aws.get('Error', {}).get('Code', '')}".strip()
+        code = aws.get("Error", {}).get("Code", "")
+        name = name if code in ("", name) else f"{name} {code}"
         status = aws.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return f"LLM call failed: {name}" + (f" (HTTP {status})" if status else "")
+
+
+def _is_context_overflow(e):
+    """Whether the model rejected the request as longer than its context window.
+
+    LangChain recognises some providers' wording (ContextOverflowError) but not
+    all: newer openai clients leave the error code out of the text it checks,
+    and Bedrock models word it their own way. The text is only inspected here,
+    never logged.
+    """
+    from langchain_core.exceptions import ContextOverflowError
+
+    if isinstance(e, ContextOverflowError) or getattr(e, "code", None) == "context_length_exceeded":
+        return True
+    aws = getattr(e, "response", None)
+    if not isinstance(aws, dict) or aws.get("Error", {}).get("Code", "").lower() != "validationexception":
+        return False
+    text = str(aws["Error"].get("Message", "")).lower()
+    return any(word in text for word in ("too long", "context", "too many")) and \
+        any(word in text for word in ("token", "input", "prompt", "length"))
 
 
 def _within(seconds, coroutine):
@@ -101,13 +127,12 @@ def _within(seconds, coroutine):
         loop.close()
 
 
-async def _answer(block, payload):
-    """The answer (text, or a dict for structured output) and the tool calls made on the way."""
+async def _answer(block, payload, trace):
+    """The answer: text, or a dict for structured output. Tool calls are recorded in `trace`."""
     from langchain_core.messages import HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
 
-    tools, servers = await mcp_tools.load(payload.get("mcps") or [])
-    trace = mcp_tools.Trace(servers)
+    tools, trace.servers = await mcp_tools.load(payload.get("mcps") or [])
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
     system_prompt = payload.get("system_prompt") or None
@@ -116,12 +141,12 @@ async def _answer(block, payload):
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
                                 config={"callbacks": [trace.recorder]})
     if payload.get("structured_output") is None:
-        return state["messages"][-1].text, trace.calls
+        return state["messages"][-1].text
     # One more call, as LangGraph's own response_format does, so the agent
     # can use its tools first and then put the outcome into the shape.
     messages = ([SystemMessage(system_prompt)] if system_prompt else []) + state["messages"] + [
         HumanMessage(structured.REQUEST)]
-    return await structured.answer(model, messages, structured.schema(payload["structured_output"])), trace.calls
+    return await structured.answer(model, messages, structured.schema(payload["structured_output"]))
 
 
 def failed(error):

@@ -14,7 +14,7 @@ import asyncio
 import datetime
 import ssl
 
-from aitk_local import log
+from aitk_local import config, log
 
 
 class Unusable(Exception):
@@ -63,7 +63,8 @@ async def _server_tools(block):
         raise Unusable(f"MCP server '{name}' has tools that need approval ({needs_approval}), "
                        "and approvals aren't supported by the local agent runtime yet")
     try:
-        offered = await load_mcp_tools(None, connection=_connection(block), server_name=name)
+        offered = await load_mcp_tools(None, connection=_connection(block), server_name=name,
+                                       tool_interceptors=[_capped(config.max_tool_result_chars())])
     except Exception as e:
         raise Unusable(f"MCP server '{name}' couldn't be used: {_reason(e)}") from e
     tools = [t for t in offered if t.name in selected]
@@ -71,6 +72,37 @@ async def _server_tools(block):
     if missing:
         log.get_logger().warning("MCP server '%s' doesn't offer selected tools %s", name, missing)
     return tools
+
+
+def _capped(limit):
+    """A tool interceptor that cuts a result's text to `limit` characters.
+
+    Every result stays in the conversation and is resent on each step, so a
+    few large searches can outgrow the model's context window (live on 0.8.0:
+    14 Splunk searches, about 400 KB, ended a Bedrock run). The model is told
+    the result was cut, so it can narrow its search.
+    """
+    async def cap(request, handler):
+        from mcp.types import CallToolResult, TextContent
+
+        result = await handler(request)
+        if not isinstance(result, CallToolResult):
+            return result
+        texts = [c for c in result.content if isinstance(c, TextContent)]
+        total = sum(len(c.text) for c in texts)
+        if total <= limit:
+            return result
+        content, room = [], limit
+        for c in result.content:
+            if isinstance(c, TextContent):
+                c, room = c.model_copy(update={"text": c.text[:room]}), max(0, room - len(c.text))
+            content.append(c)
+        content.append(TextContent(type="text", text=(
+            f"\n[Result cut to {limit} of {total} characters to fit the model's context. "
+            "Narrow the search or ask for fewer rows to see more.]")))
+        return result.model_copy(update={"content": content})
+
+    return cap
 
 
 def _connection(block):
@@ -126,8 +158,8 @@ class Trace:
     """Each tool call, in the fields AI Toolkit's run history shows: name,
     arguments, result, tool_call_status and start and end times."""
 
-    def __init__(self, servers):
-        self.servers = servers
+    def __init__(self, servers=None):
+        self.servers = servers or {}  # tool name -> MCP server name, set once tools are loaded
         self.calls = []
         self._open = {}  # LangChain run id -> call
         self.recorder = _recorder(self)
