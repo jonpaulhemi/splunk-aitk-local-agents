@@ -1,7 +1,7 @@
 """A fake MCP server over streamable HTTP and TLS: the MCP edge in tests.
 
 Serves three tools: `search` (echoes the query with a result count, or for
-`big <n>` returns n characters; like the Splunk MCP Server's splunk_run_query
+`big <n>` returns n characters and `slow <n>` takes n seconds; like the Splunk MCP Server's splunk_run_query
 it has optional arguments too),
 `delete_index` (which agents in these tests never select) and `broken` (an MCP
 tool error). Every HTTP request's headers are recorded, and requests missing
@@ -58,11 +58,13 @@ class FakeMCP:
         mcp = FastMCP("fake-splunk-mcp")
 
         @mcp.tool()
-        def search(query: str, earliest_time: str = "-15m") -> str:
+        async def search(query: str, earliest_time: str = "-15m") -> str:
             """Run a Splunk search and return the matching events."""
             fake.calls.append(("search", {"query": query}))
             if query.startswith("big "):  # a search returning a lot of data
                 return "e" * int(query.split()[1])
+            if query.startswith("slow "):
+                await asyncio.sleep(float(query.split()[1]))
             return f"3 events for {query}"
 
         @mcp.tool()

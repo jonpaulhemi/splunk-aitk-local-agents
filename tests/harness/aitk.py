@@ -18,10 +18,12 @@ def runtime_base_url(splunkd):
 
 
 def create_agent(aitk, splunkd, admin, **settings):
-    """Create agent "triage" through AI Toolkit's AgentManager (and so our runtime); return its record."""
+    """Create an agent ("triage" unless `name` is given) through AI Toolkit's AgentManager (and so our
+    runtime); return its record."""
     manager = aitk.agent_manager.AgentManager(searchinfo(splunkd, admin))
-    assert manager.create_agent({"name": "triage", "system_prompt": "You are terse.", **settings})
-    return manager.get_agent("triage", is_auth_by_pass=True)
+    settings = {"name": "triage", "system_prompt": "You are terse.", **settings}
+    assert manager.create_agent(settings)
+    return manager.get_agent(settings["name"], is_auth_by_pass=True)
 
 
 def run_aiagent(aitk, splunkd, admin, agent, llm_config, prompt, rows, mcps=(), **params):

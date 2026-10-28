@@ -15,10 +15,15 @@ ACTIVE = "active"
 NOT_FOUND = "not_found"
 
 
-def _db_path():
+def state_file(name):
+    """Path of `name` in this app's state directory, which outlives app upgrades."""
     directory = os.path.join(os.environ["SPLUNK_HOME"], "var", "lib", "aitk_local")
     os.makedirs(directory, exist_ok=True)
-    return os.path.join(directory, "runtime.db")
+    return os.path.join(directory, name)
+
+
+def _db_path():
+    return state_file("runtime.db")
 
 
 _schema_ready = False
