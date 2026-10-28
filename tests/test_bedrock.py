@@ -98,7 +98,7 @@ def test_model_refusal_reports_the_aws_error_code_not_its_text(aitk, splunkd, ad
     df = run_aiagent(aitk, splunkd, admin, agent, _bedrock_block(), "hi", [{"x": 1}])
 
     assert df.iloc[0]["status"] == "error"
-    assert "ValidationException" in df.iloc[0]["error"] and "HTTP 400" in df.iloc[0]["error"]
+    assert df.iloc[0]["error"] == "LLM call failed: ValidationException (HTTP 400)"
     assert "identifier is invalid" not in df.iloc[0]["error"]
 
 

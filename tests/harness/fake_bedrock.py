@@ -2,7 +2,8 @@
 
 Point botocore at it with AWS_ENDPOINT_URL_BEDROCK_RUNTIME and
 AWS_ENDPOINT_URL_STS. Converse requests are answered by `script(request_json)`,
-which returns the assistant's text or an (status, error_type, message) triple.
+which returns the assistant's text, a `tool_use(name, input)` reply, or an
+(status, error_type, message) triple.
 Signatures aren't checked, but each request's SigV4 credential scope is
 recorded so tests can see which key, region and session token were used.
 """
@@ -110,10 +111,20 @@ def _scope(authorization):
     return match.groups() if match else (None, None, None)
 
 
-def _converse(text):
+def tool_use(name, tool_input, tool_use_id="tooluse_1"):
+    """A Converse reply asking to call one tool."""
+    return {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}
+
+
+def offered_tools(request):
+    return sorted(t["toolSpec"]["name"] for t in (request.get("toolConfig") or {}).get("tools", []))
+
+
+def _converse(answer):
+    content = [answer] if isinstance(answer, dict) else [{"text": answer}]
     return {
-        "output": {"message": {"role": "assistant", "content": [{"text": text}]}},
-        "stopReason": "end_turn",
+        "output": {"message": {"role": "assistant", "content": content}},
+        "stopReason": "tool_use" if isinstance(answer, dict) else "end_turn",
         "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
         "metrics": {"latencyMs": 1},
     }
