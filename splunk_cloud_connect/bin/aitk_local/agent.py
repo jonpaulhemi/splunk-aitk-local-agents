@@ -103,7 +103,7 @@ def _within(seconds, coroutine):
 
 async def _answer(block, payload):
     """The answer (text, or a dict for structured output) and the tool calls made on the way."""
-    from langchain_core.messages import SystemMessage
+    from langchain_core.messages import HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
 
     tools, servers = await mcp_tools.load(payload.get("mcps") or [])
@@ -119,7 +119,8 @@ async def _answer(block, payload):
         return state["messages"][-1].text, trace.calls
     # One more call, as LangGraph's own response_format does, so the agent
     # can use its tools first and then put the outcome into the shape.
-    messages = ([SystemMessage(system_prompt)] if system_prompt else []) + state["messages"]
+    messages = ([SystemMessage(system_prompt)] if system_prompt else []) + state["messages"] + [
+        HumanMessage(structured.REQUEST)]
     return await structured.answer(model, messages, structured.schema(payload["structured_output"])), trace.calls
 
 

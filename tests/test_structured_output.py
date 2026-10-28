@@ -70,7 +70,36 @@ def test_answer_follows_the_schema_and_lands_in_the_result_as_json(aitk, splunkd
     assert schema["properties"]["severity"]["enum"] == ["low", "medium", "high"]
     assert schema["properties"]["severity"]["description"] == "How bad it is"
     assert schema["properties"]["hosts"] == {"type": "array", "items": {"type": "string"}, "maxItems": 5}
-    assert schema["properties"]["event_count"] == {"type": "integer", "minimum": 0}
+    assert schema["properties"]["event_count"] == {"type": ["integer", "null"], "minimum": 0}
+
+
+def test_optional_fields_may_come_back_empty(aitk, splunkd, admin, llm):
+    # AI Toolkit's own field checks let any field be null; models often fill optional fields that way.
+    answer = {"severity": "low", "hosts": ["web01"], "event_count": None, "details": None}
+    llm.script = _answers_with(answer)
+
+    df = _run(aitk, splunkd, admin, _llm_block(llm))
+
+    assert df.iloc[0]["status"] == "success", df.iloc[0]["error"]
+    assert json.loads(df.iloc[0]["result_1"]) == answer
+
+
+def test_fields_the_agent_doesnt_define_are_dropped(aitk, splunkd, admin, llm):
+    llm.script = _answers_with({**ANSWER, "made_up": "extra"})
+
+    df = _run(aitk, splunkd, admin, _llm_block(llm))
+
+    assert json.loads(df.iloc[0]["result_1"]) == ANSWER
+
+
+def test_the_structured_answer_is_asked_for_in_a_user_turn(aitk, splunkd, admin, llm):
+    # Some Bedrock models reject a request that ends on the assistant's own turn.
+    llm.script = _answers_with(ANSWER)
+
+    _run(aitk, splunkd, admin, _llm_block(llm))
+
+    last = llm.requests[-1]["body"]["messages"][-1]
+    assert last["role"] == "user" and "structured_output" in last["content"]
 
 
 def test_agent_without_structured_output_answers_in_prose(aitk, splunkd, admin, llm):

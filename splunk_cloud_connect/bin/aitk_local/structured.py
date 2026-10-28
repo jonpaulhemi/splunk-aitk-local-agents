@@ -9,6 +9,8 @@ result column itself.
 """
 
 TOOL_NAME = "structured_output"
+# Asked last, as a user turn: some Bedrock models reject a request ending on the assistant's turn.
+REQUEST = f"Give your final answer now by calling the {TOOL_NAME} tool."
 
 
 class Invalid(Exception):
@@ -28,9 +30,13 @@ def schema(structured_output):
 
 
 def _property(field):
+    # AI Toolkit's own checks let any field be null, so optional fields (and
+    # ones listing null as an allowed value) may be.
+    allowed = field.get("allowed_values")
+    nullable = not field.get("required") or (allowed is not None and None in allowed)
     item = {"type": field["type"]}
-    if field.get("allowed_values") is not None:
-        item["enum"] = field["allowed_values"]
+    if allowed is not None:
+        item["enum"] = allowed
     for ours, theirs in (("min_length", "minLength"), ("max_length", "maxLength"),
                          ("minimum", "minimum"), ("maximum", "maximum")):
         if ours in field:
@@ -39,8 +45,10 @@ def _property(field):
     if "precision" in field:
         hints.append(f"Round to {field['precision']} decimal places.")
     if not field.get("is_array"):
+        if nullable:
+            item["type"] = [field["type"], "null"]
         return {**item, **_described(hints, field)}
-    array = {"type": "array", "items": item}
+    array = {"type": ["array", "null"] if nullable else "array", "items": item}
     for ours, theirs in (("array_min_items", "minItems"), ("array_max_items", "maxItems")):
         if ours in field:
             array[theirs] = field[ours]
@@ -57,14 +65,20 @@ def _described(hints, field):
 async def answer(model, messages, json_schema):
     """Ask `model` for the final answer of the conversation in `messages` in
     `json_schema`'s shape, and check it."""
+    from langchain_core.exceptions import OutputParserException
+
     from aitk_local import llm
 
-    result = await llm.structured(model, json_schema).ainvoke(messages)
+    try:
+        result = await llm.structured(model, json_schema).ainvoke(messages)
+    except OutputParserException:  # some Bedrock models parse inside the call
+        result = {}
     parsed = result.get("parsed")
     if not isinstance(parsed, dict):
         raise Invalid("The model didn't return the agent's structured output")
     _check(parsed, json_schema)
-    return parsed
+    # Fields the agent doesn't define are dropped rather than passed on to the results.
+    return {name: value for name, value in parsed.items() if name in json_schema["properties"]}
 
 
 def _check(value, json_schema):
