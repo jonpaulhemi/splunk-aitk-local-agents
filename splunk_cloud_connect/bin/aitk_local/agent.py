@@ -4,7 +4,7 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import llm, log, mcp_tools, structured
+from aitk_local import llm, log, mcp_tools, memory, structured
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
@@ -136,17 +136,22 @@ async def _answer(block, payload, trace):
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
     system_prompt = payload.get("system_prompt") or None
-    graph = create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
-                               prompt=system_prompt)
-    state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
-                                config={"callbacks": [trace.recorder]})
-    if payload.get("structured_output") is None:
-        return state["messages"][-1].text
-    # One more call, as LangGraph's own response_format does, so the agent
-    # can use its tools first and then put the outcome into the shape.
-    messages = ([SystemMessage(system_prompt)] if system_prompt else []) + state["messages"] + [
-        HumanMessage(structured.REQUEST)]
-    return await structured.answer(model, messages, structured.schema(payload["structured_output"]))
+
+    def model_input(messages):
+        return ([SystemMessage(system_prompt)] if system_prompt else []) + memory.model_view(messages)
+
+    async with memory.session(payload) as (checkpointer, session):
+        graph = create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
+                                   prompt=lambda state: model_input(state["messages"]), checkpointer=checkpointer)
+        # Saved once, at the end of the run, rather than after every step.
+        state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
+                                    config={**session, "callbacks": [trace.recorder]}, durability="exit")
+        if payload.get("structured_output") is None:
+            return state["messages"][-1].text
+        # One more call, as LangGraph's own response_format does, so the agent
+        # can use its tools first and then put the outcome into the shape.
+        messages = model_input(state["messages"]) + [HumanMessage(structured.REQUEST)]
+        return await structured.answer(model, messages, structured.schema(payload["structured_output"]))
 
 
 def failed(error):

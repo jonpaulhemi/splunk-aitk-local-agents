@@ -32,3 +32,16 @@ def max_tool_result_chars():
     conf = _conf()
     value = conf.get("agent", "max_tool_result_chars", fallback="").strip()
     return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_MAX_TOOL_RESULT_CHARS
+
+
+DEFAULT_SESSION_RETENTION_HOURS = 168.0
+
+
+def session_retention_hours():
+    """How long an unused session is remembered ([memory] session_retention_hours)."""
+    value = _conf().get("memory", "session_retention_hours", fallback="").strip()
+    try:
+        hours = float(value)
+    except ValueError:
+        return DEFAULT_SESSION_RETENTION_HOURS
+    return hours if hours > 0 else DEFAULT_SESSION_RETENTION_HOURS

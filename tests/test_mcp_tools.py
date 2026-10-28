@@ -321,3 +321,38 @@ def test_the_cut_is_configurable(aitk, splunkd, admin, llm, mcp, runtime_conf):
     _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)])
 
     assert tool_results(llm.requests[-1]["body"])[-1].startswith("e" * 100 + "\n[Result cut to 100 of 500")
+
+
+def test_earlier_turns_tool_results_are_cut_shorter_on_later_turns(aitk, splunkd, admin, llm, mcp):
+    # Every earlier result is resent on each later turn of the session (#22).
+    llm.script = _search_big(5000)
+    agent = create_agent(aitk, splunkd, admin)
+    session = "investigation-1"
+    for prompt in ("Find errors", "Anything else?"):
+        df = run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), prompt, [{"x": 1}],
+                         mcps=[_mcp_block(mcp.url)], session_id=session)
+        assert df.iloc[0]["status"] == "success", df.iloc[0]["error"]
+
+    assert last_user_message(llm.requests[-1]["body"]) == "Anything else?"
+    assert tool_results(llm.requests[-1]["body"]) == [
+        "e" * 2000 + "\n[Result from an earlier turn, cut to 2000 of 5000 characters. Run the tool again to see more.]"]
+
+
+def test_a_turn_that_times_out_during_a_tool_call_is_not_remembered(aitk, splunkd, admin, llm, mcp):
+    # Remembering it would leave the session ending in a tool call with no result,
+    # which models reject on the next turn.
+    def script(request):
+        if last_user_message(request) == "Find errors":
+            return tool_call("search", {"query": "slow 15"})
+        return "Hello."
+    llm.script = script
+    agent = create_agent(aitk, splunkd, admin, agent_timeout=6)
+    df = run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), "Find errors", [{"x": 1}],
+                     mcps=[_mcp_block(mcp.url)], session_id="investigation-2")
+    assert "timed out" in df.iloc[0]["error"]
+
+    df = run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), "Hello?", [{"x": 1}],
+                     mcps=[_mcp_block(mcp.url)], session_id="investigation-2")
+
+    assert df.iloc[0]["status"] == "success", df.iloc[0]["error"]
+    assert [m["role"] for m in llm.requests[-1]["body"]["messages"]] == ["system", "user"]

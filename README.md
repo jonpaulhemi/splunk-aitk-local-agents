@@ -52,6 +52,12 @@ Add `-d allowed_domains=mcp.corp.example,*.internal.example` to also set AI Tool
 
 Agents use the MCP connections and tools selected on them in Agent Launchpad, over streamable HTTP. Each MCP server's TLS certificate is checked against the search head's operating system trust store (AI Toolkit's own MCP client doesn't check it). A server whose CA isn't there fails the run with "its TLS certificate isn't trusted by this search head". For the Splunk MCP Server app on a search head, that means splunkd's certificate must chain to a CA in the OS trust store, not Splunk's default self-signed one. Tool calls, with their arguments and results, show in Agent Run History.
 
+## Session memory
+
+Each turn of a Launchpad chat sees the turns before it, as does each `| aiagent` search given the same `session_id=`. A session belongs to one agent, so two agents given the same `session_id` don't share it. Conversations are kept in `$SPLUNK_HOME/var/lib/aitk_local/memory.db`, so every splunkd process sees them and they survive restarts. Tool results from earlier turns are shown to the model cut to 2,000 characters, so one long investigation doesn't fill the context of every turn after it. A turn that fails or times out isn't remembered. There's no memory across sessions.
+
+The file holds the conversations, tool results included, in plain form, the same as Splunk's own search artifacts. Sessions are deleted once they've gone unused for `[memory] session_retention_hours`.
+
 ## Layout
 
 - `splunk_cloud_connect/`: the Splunk app itself.
@@ -69,6 +75,10 @@ Agents use the MCP connections and tools selected on them in Agent Launchpad, ov
 `aitk_local.conf` `[agent]`:
 
 - `max_tool_result_chars`: how many characters of each tool result (such as a Splunk search's rows) the model sees. Longer results are cut, with a note telling the model so. Every result is resent on each step of a run, so this keeps long investigations inside the model's context window. The default is 16000, about 4,000 tokens.
+
+`aitk_local.conf` `[memory]`:
+
+- `session_retention_hours`: how long a session is remembered after its last turn. Expired sessions are deleted at the start of the next run. The default is 168 (a week).
 
 ## Running the contract tests
 
