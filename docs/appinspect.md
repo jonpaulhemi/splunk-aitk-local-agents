@@ -48,3 +48,19 @@ These findings were fixed in 0.10.1:
 - `server.conf` replicates `aitk_local.conf` in a search head cluster.
 - Files in `lib/` aren't executable.
 - The unused audio helpers in openai and langsmith, which call `wave.open`, are left out of the package.
+
+## Upgrading in place
+
+`splunk install app -update 1` unpacks the new package over the installed app. It doesn't delete files that the new package leaves out, and it doesn't change the modes of files that are already there. So a search head upgraded from 0.10.0 still has the audio helpers and the executable library files. They're harmless: nothing imports the helpers, and the libraries load either way.
+
+The package itself is what AppInspect checks. To make the installed tree match it as well, follow these steps:
+
+1. Back up `$SPLUNK_HOME/etc/apps/splunk_cloud_connect/local/`.
+2. Remove `$SPLUNK_HOME/etc/apps/splunk_cloud_connect`.
+3. Install the .tgz.
+4. Restore `local/`.
+5. Restart.
+
+Session memory survives this, because it lives in `$SPLUNK_HOME/var/lib/aitk_local/`, outside the app.
+
+The libraries' compiled modules were checked to load from the 0.10.1 package with no execute bits (CPython 3.13).
