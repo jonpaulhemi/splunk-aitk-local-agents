@@ -19,7 +19,10 @@ TIMEOUT_SECONDS = 900
 # Prompts and answers must stay on this host: no LangSmith tracing, whatever
 # splunkd's environment says.
 SCRUBBED_ENV = ("LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING", "LANGSMITH_TRACING", "LANGCHAIN_API_KEY",
-                "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT")
+                "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT",
+                # A Bedrock API key in splunkd's environment would override the
+                # connection's own credentials.
+                "AWS_BEARER_TOKEN_BEDROCK")
 
 
 def run(handler_name, in_string):

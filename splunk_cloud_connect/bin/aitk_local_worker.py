@@ -32,3 +32,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    sys.stderr.flush()
+    # Don't wait on threads a timed-out agent run left blocked in a model call.
+    os._exit(0)
