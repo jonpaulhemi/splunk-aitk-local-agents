@@ -130,6 +130,22 @@ def test_concurrent_sessions_keep_to_themselves(aitk, splunkd, admin, agent, llm
         ]
 
 
+def test_concurrent_turns_in_one_session_are_both_remembered(aitk, splunkd, admin, agent, llm):
+    # A double submit in Launchpad, or two searches given the same session_id.
+    llm.delay = 0.5
+    session = _session()
+    threads = [threading.Thread(target=_turn, args=(aitk, splunkd, admin, agent, llm, prompt, session))
+               for prompt in ("My name is Ada.", "I work on the SOC team.")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    _turn(aitk, splunkd, admin, agent, llm, "Who am I?", session)
+
+    remembered = _conversation(llm, "Who am I?")
+    assert ("user", "My name is Ada.") in remembered and ("user", "I work on the SOC team.") in remembered
+
 def test_a_failed_turn_is_not_remembered(aitk, splunkd, admin, agent, llm):
     session = _session()
     _turn(aitk, splunkd, admin, agent, llm, "My name is Ada.", session)

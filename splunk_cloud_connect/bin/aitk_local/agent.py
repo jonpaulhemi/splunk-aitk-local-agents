@@ -153,6 +153,7 @@ async def _answer(block, payload, trace):
         messages = model_input(state["messages"]) + [HumanMessage(structured.REQUEST)]
         return await structured.answer(model, messages, structured.schema(payload["structured_output"]))
 
+
 def failed(error):
     log.get_logger().info("invoke failed before running: %s", error)
     return _completed(False, error=error)

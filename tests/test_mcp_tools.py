@@ -343,10 +343,10 @@ def test_a_turn_that_times_out_during_a_tool_call_is_not_remembered(aitk, splunk
     # which models reject on the next turn.
     def script(request):
         if last_user_message(request) == "Find errors":
-            return tool_call("search", {"query": "slow 6"})
+            return tool_call("search", {"query": "slow 15"})
         return "Hello."
     llm.script = script
-    agent = create_agent(aitk, splunkd, admin, agent_timeout=2)
+    agent = create_agent(aitk, splunkd, admin, agent_timeout=6)
     df = run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), "Find errors", [{"x": 1}],
                      mcps=[_mcp_block(mcp.url)], session_id="investigation-2")
     assert "timed out" in df.iloc[0]["error"]
