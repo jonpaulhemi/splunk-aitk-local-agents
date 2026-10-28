@@ -20,7 +20,7 @@ Source: `splunk-ai-toolkit_620.tgz` (app id `Splunk_ML_Toolkit`, version 6.2.0, 
 | DSDL containers | Your container host (docker/k8s/EKS) | On-prem capable |
 
 ## Built-in guardrail
-`mlspl.conf [ai:AllowedDomains]`: `allowed_domains = *`, `enforce_domain_validation = true`. Setting `allowed_domains` to only your internal hosts should block agent/LLM calls to anything else (enforced in `bin/connection_config_manager/utils/common_utils.py`). Not yet verified to cover every code path.
+`mlspl.conf [ai:AllowedDomains]`: `allowed_domains = *`, `enforce_domain_validation = true`. Checked for #17: the only caller of `CommonUtils.is_url_whitelisted` (`bin/connection_config_manager/utils/common_utils.py`) is MCP URL validation (`mcp/mcp_util.py`). The allowlist does **not** gate LLM endpoints or the agent runtime. The check also always requires HTTPS and rejects `localhost`/`127.0.0.1`/`::1`/`0.0.0.0`.
 
 ## Web UI
 The bundled JS has no live external hosts beyond license/doc strings (momentjs, lodash, highcharts and so on). Help links point at help.splunk.com.
