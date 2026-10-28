@@ -6,3 +6,5 @@ langchain-core
 langchain-aws
 langchain-openai
 langchain-mcp-adapters
+# MCP servers are verified against the OS trust store (#20).
+truststore
