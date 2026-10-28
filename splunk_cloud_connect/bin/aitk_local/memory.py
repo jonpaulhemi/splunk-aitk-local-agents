@@ -24,9 +24,10 @@ EARLIER_TOOL_RESULT_CHARS = 2000
 
 
 @contextlib.asynccontextmanager
-async def session(payload):
+async def session(payload, forget_failures=True):
     """(checkpointer, LangGraph config) for the payload's session; (None, {})
-    for a run without one."""
+    for a run without one. With `forget_failures`, a turn that fails leaves
+    the session as it was."""
     import aiosqlite
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -46,7 +47,8 @@ async def session(payload):
             except BaseException:
                 # A failed or timed-out turn isn't remembered, so it can't leave the
                 # session ending in tool calls that were never answered.
-                await _forget_since(db, thread_id, before)
+                if forget_failures:
+                    await _forget_since(db, thread_id, before)
                 raise
 
 

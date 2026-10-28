@@ -52,6 +52,10 @@ Add `-d allowed_domains=mcp.corp.example,*.internal.example` to also set AI Tool
 
 Agents use the MCP connections and tools selected on them in Agent Launchpad, over streamable HTTP. Each MCP server's TLS certificate is checked against the search head's operating system trust store (AI Toolkit's own MCP client doesn't check it). A server whose CA isn't there fails the run with "its TLS certificate isn't trusted by this search head". For the Splunk MCP Server app on a search head, that means splunkd's certificate must chain to a CA in the OS trust store, not Splunk's default self-signed one. Tool calls, with their arguments and results, show in Agent Run History.
 
+## Approvals
+
+A tool selected under "requires approval" on an agent's MCP connection doesn't run until someone approves it. The run pauses as soon as the model asks for the call. Launchpad then shows the call, its arguments and the model's explanation so far, and AI Toolkit emails the agent's approvers if that's set up. Approving runs the tool once and the run carries on. Rejecting tells the model the call didn't run. A note typed with the decision goes to the model too. If someone sends a new message instead of deciding, the waiting calls never run. A paused run is kept with the session, so it survives restarts and expires with it (see below). `| aiagent` resumes a session with `session_id=` and `hitl_input='{"decisions": [{"tool_call_id": "...", "approved": true}]}'`.
+
 ## Session memory
 
 Each turn of a Launchpad chat sees the turns before it, as does each `| aiagent` search given the same `session_id=`. A session belongs to one agent, so two agents given the same `session_id` don't share it. Conversations are kept in `$SPLUNK_HOME/var/lib/aitk_local/memory.db`, so every splunkd process sees them and they survive restarts. Tool results from earlier turns are shown to the model cut to 2,000 characters, so one long investigation doesn't fill the context of every turn after it. A turn that fails or times out isn't remembered. There's no memory across sessions.

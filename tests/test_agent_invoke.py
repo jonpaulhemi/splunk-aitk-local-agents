@@ -143,17 +143,6 @@ def test_connection_without_a_model_is_a_clear_failure(aitk, splunkd, admin, llm
     assert llm.requests == []
 
 
-def test_approval_resume_fails_clearly_instead_of_answering_nothing(aitk, splunkd, admin, llm):
-    agent = _agent(aitk, splunkd, admin)
-
-    df = _run(aitk, splunkd, admin, agent, _llm_block(llm), "Tool approval decisions submitted.", [{"x": 1}],
-              hitl_input=json.dumps({"decisions": [{"tool_call_id": "t1", "approved": True}]}))
-
-    assert df.iloc[0]["status"] == "error"
-    assert "Approvals" in df.iloc[0]["error"]
-    assert llm.requests == []
-
-
 def _token(aitk, splunkd, admin):
     return aitk.util.fetch_cloud_connect_details_with_system_token(searchinfo(splunkd, admin))["scs_token"]
 
