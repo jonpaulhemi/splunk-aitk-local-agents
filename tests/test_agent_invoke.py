@@ -8,10 +8,9 @@ import base64
 import json
 
 import httpx
-import pandas as pd
 import pytest
 
-from harness.aitk import runtime_base_url, searchinfo
+from harness.aitk import create_agent, run_aiagent, runtime_base_url, searchinfo
 from harness.fake_llm import FakeLLM, last_user_message
 
 ADMIN_CAPS = ["admin_all_objects", "apply_ai_commander_command", "list_storage_passwords"]
@@ -47,24 +46,8 @@ def _llm_block(llm, **overrides):
     return {"llm": {**block, **overrides}}
 
 
-def _agent(aitk, splunkd, admin, **settings):
-    manager = aitk.agent_manager.AgentManager(searchinfo(splunkd, admin))
-    assert manager.create_agent({"name": "triage", "system_prompt": "You are terse.", **settings})
-    return manager.get_agent("triage", is_auth_by_pass=True)
-
-
-def _run(aitk, splunkd, admin, agent, llm_config, prompt, rows, **params):
-    options = {
-        "params": {"agent_name": agent["name"], "prompt": prompt, **params},
-        "agent_config": agent,
-        "mcp_configs": {"mcps": []},
-        "kb_configs": {"knowledge_bases": {"vector_dbs": []}},
-        "llm_config": llm_config,
-    }
-    processor = aitk.ai_agent.AiAgentProcessor(options, searchinfo(splunkd, admin))
-    processor.df = pd.DataFrame(rows)
-    processor.process()
-    return processor.df
+_agent = create_agent
+_run = run_aiagent
 
 
 def test_aiagent_gets_the_models_answer(aitk, splunkd, admin, llm):

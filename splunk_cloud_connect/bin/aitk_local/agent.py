@@ -38,7 +38,7 @@ def run(payload):
             asyncio.wait_for(_answer(llm.chat_model(block), payload), timeout=timeout)
         )
         outcome = _completed(True, response)
-    except (llm.UnsupportedProvider, NotSupported) as e:
+    except (llm.UnusableConnection, NotSupported) as e:
         outcome = _completed(False, error=str(e))
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s")
@@ -77,9 +77,15 @@ def _where(e):
 
 
 def _llm_error(e):
-    # The exception text can echo the request, so only its type and HTTP status go out.
+    # The exception text can echo the request, so only its type, any AWS error
+    # code, and the HTTP status go out.
+    name = type(e).__name__
     status = getattr(e, "status_code", None)
-    return f"LLM call failed: {type(e).__name__}" + (f" (HTTP {status})" if status else "")
+    aws = getattr(e, "response", None)
+    if isinstance(aws, dict):  # botocore ClientError
+        name = f"{name} {aws.get('Error', {}).get('Code', '')}".strip()
+        status = aws.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return f"LLM call failed: {name}" + (f" (HTTP {status})" if status else "")
 
 
 async def _answer(model, payload):
