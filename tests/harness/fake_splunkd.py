@@ -60,7 +60,8 @@ def _read_conf(app_dir, name):
     for layer in ("default", "local"):
         path = app_dir / layer / name
         if path.exists():
-            parser.read(path)
+            # Splunk continues a value onto the next line with a trailing backslash.
+            parser.read_string(path.read_text().replace("\\\n", " "), source=str(path))
     return parser
 
 
@@ -90,6 +91,10 @@ class FakeSplunkd:
         self.passwords = {}  # (app, realm, name) -> clear password
         self.fail_credential_store = False  # simulate a broken storage/passwords
         self.kvstore = {}  # (app, collection) -> {_key: document}
+        # Settings written over REST: (app, conf, stanza) -> {key: value}. Apps'
+        # own conf files are only read, never written (AI Toolkit's is a symlink
+        # to the real unpacked app).
+        self.conf_writes = {}
         self.routes = []
         self._lock = threading.Lock()
         self._server = None
@@ -260,7 +265,7 @@ class FakeSplunkd:
             "path_info": rest_path[len(route.match):].lstrip("/"),
             "method": method,
             "query": [list(kv) for kv in query],
-            "form": [],
+            "form": [list(kv) for kv in urllib.parse.parse_qsl(body.decode())] if method == "POST" else [],
             "ns": {"app": ns_app, "user": ns_user},
             "session": {"user": user.name if user else None, "authtoken": token if user else None},
             "server": {
@@ -320,7 +325,65 @@ class FakeSplunkd:
         if rest[:3] == ["storage", "collections", "data"] and len(rest) >= 4 and ns_app:
             return self._kvstore(method, rest[3], rest[4:], query, body, ns_app)
 
+        if ns_app and ns_app != "-":
+            form = dict(urllib.parse.parse_qsl(body.decode())) if method == "POST" else {}
+            if method == "POST" and "admin_all_objects" not in self._capabilities(user):
+                return 403, {}, {"messages": [{"type": "ERROR", "text": "Forbidden"}]}
+            if len(rest) >= 2 and rest[0] == "configs" and rest[1].startswith("conf-"):
+                return self._conf_endpoint(method, ns_app, rest[1][5:], rest[2:], form)
+            if rest[:2] == ["properties", "mlspl"] and len(rest) == 3 and method == "GET":
+                return 200, {}, {"entry": [{"name": k, "content": v}
+                                           for k, v in self.conf_stanza(ns_app, "mlspl.conf", rest[2]).items()]}
+            if rest[:2] == ["data", "inputs"] and len(rest) in (4, 5):
+                stanza = f"{rest[2]}://{rest[3]}"
+                if len(rest) == 5:
+                    if method != "POST" or rest[4] not in ("disable", "enable"):
+                        return NOT_FOUND
+                    form = {"disabled": "1" if rest[4] == "disable" else "0"}
+                return self._conf_entry(method, ns_app, "inputs.conf", stanza, form,
+                                        lambda c: {"disabled": _truthy(c.get("disabled"), False)})
+            if rest[:2] == ["saved", "searches"] and len(rest) == 3:
+                if "is_scheduled" in form:
+                    form = {"enableSched": form.pop("is_scheduled"), **form}
+                return self._conf_entry(method, ns_app, "savedsearches.conf", rest[2], form,
+                                        lambda c: {"is_scheduled": _truthy(c.get("enableSched"), False)})
+
         return NOT_FOUND
+
+    def conf_stanza(self, app, conf, stanza):
+        """A stanza as splunkd would merge it: the app's default/ and local/, then REST writes."""
+        parser = _read_conf(self.splunk_home / "etc" / "apps" / app, conf)
+        merged = dict(parser[stanza]) if parser.has_section(stanza) else None
+        writes = self.conf_writes.get((app, conf, stanza))
+        if merged is None and writes is None:
+            return None
+        return {**(merged or {}), **(writes or {})}
+
+    def _conf_stanzas(self, app, conf):
+        names = set(_read_conf(self.splunk_home / "etc" / "apps" / app, conf).sections())
+        names |= {s for (a, c, s) in self.conf_writes if (a, c) == (app, conf)}
+        return sorted(names)
+
+    def _conf_endpoint(self, method, app, conf_name, rest, form):
+        conf = f"{conf_name}.conf"
+        if not rest and method == "GET":
+            return 200, {}, {"entry": [{"name": s, "content": self.conf_stanza(app, conf, s)}
+                                       for s in self._conf_stanzas(app, conf)]}
+        if len(rest) == 1:
+            return self._conf_entry(method, app, conf, rest[0], form, lambda c: c)
+        return NOT_FOUND
+
+    def _conf_entry(self, method, app, conf, stanza, form, view):
+        """GET or POST (update) one stanza; `view` shapes its content like the endpoint does."""
+        with self._lock:
+            if self.conf_stanza(app, conf, stanza) is None:
+                return NOT_FOUND
+            if method == "POST":
+                self.conf_writes.setdefault((app, conf, stanza), {}).update(form)
+            elif method != "GET":
+                return NOT_FOUND
+            content = self.conf_stanza(app, conf, stanza)
+        return 200, {}, {"entry": [{"name": stanza, "acl": {"app": app}, "content": view(content)}]}
 
     def _capabilities(self, user):
         if "*" in user.capabilities:

@@ -36,6 +36,18 @@ To change the library set, edit `requirements/bundle.in`, then run `lock`, `buil
 
 After installing, `GET /services/aitk_local/diagnostics` (admin only) imports every bundled library inside splunkd, runs a one-step checkpointed graph, and reports the Python version and any library that was loaded from outside `lib/`.
 
+## Turning off AI Toolkit's cloud traffic
+
+AI Toolkit syncs agent templates and managed skills from Splunk's cloud every 6 hours and schedules five telemetry searches. As an admin, run this once after installing, and again after each AI Toolkit upgrade:
+
+```
+curl -sk -u admin -X POST "https://localhost:8089/services/aitk_local/offline_setup?output_mode=json"
+```
+
+It disables the two sync inputs and unschedules the telemetry searches through splunkd's REST API, and replies with what it changed. A second run reports nothing changed.
+
+Add `-d allowed_domains=mcp.corp.example,*.internal.example` to also set AI Toolkit's domain allowlist (`mlspl.conf [ai:AllowedDomains]`) and turn its enforcement on. In AI Toolkit 6.2.0 the allowlist only limits which MCP server URLs agents may use. LLM endpoints aren't checked against it, and MCP URLs must be HTTPS and can't be `localhost`, whatever the list says. Without `allowed_domains` the allowlist is left as it is.
+
 ## Layout
 
 - `splunk_cloud_connect/`: the Splunk app itself.
