@@ -4,7 +4,7 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import llm, log, mcp_tools
+from aitk_local import llm, log, mcp_tools, structured
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
@@ -36,7 +36,7 @@ def run(payload):
             raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
         response, trace = _within(timeout, _answer(block, payload))
         outcome = _completed(True, response, tool_invocations=trace)
-    except (llm.UnusableConnection, mcp_tools.Unusable, NotSupported) as e:
+    except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, NotSupported) as e:
         outcome = _completed(False, error=str(e))
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s")
@@ -102,18 +102,25 @@ def _within(seconds, coroutine):
 
 
 async def _answer(block, payload):
-    """The answer and the tool calls made on the way."""
+    """The answer (text, or a dict for structured output) and the tool calls made on the way."""
+    from langchain_core.messages import SystemMessage
     from langgraph.prebuilt import create_react_agent
 
     tools, servers = await mcp_tools.load(payload.get("mcps") or [])
     trace = mcp_tools.Trace(servers)
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
+    system_prompt = payload.get("system_prompt") or None
     graph = create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
-                               prompt=payload.get("system_prompt") or None)
+                               prompt=system_prompt)
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
                                 config={"callbacks": [trace.recorder]})
-    return state["messages"][-1].text, trace.calls
+    if payload.get("structured_output") is None:
+        return state["messages"][-1].text, trace.calls
+    # One more call, as LangGraph's own response_format does, so the agent
+    # can use its tools first and then put the outcome into the shape.
+    messages = ([SystemMessage(system_prompt)] if system_prompt else []) + state["messages"]
+    return await structured.answer(model, messages, structured.schema(payload["structured_output"])), trace.calls
 
 
 def failed(error):

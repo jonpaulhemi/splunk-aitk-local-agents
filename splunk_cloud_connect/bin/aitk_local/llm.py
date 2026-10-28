@@ -48,6 +48,15 @@ def with_tools(model, tools):
     return model.bind_tools(tools)
 
 
+def structured(model, json_schema):
+    """`model` answering in `json_schema`'s shape through a tool call, which
+    every provider here supports; the result is {"raw", "parsed", "parsing_error"}.
+    Non-strict on OpenAI, for the reason in with_tools."""
+    if type(model).__name__ == "ChatOpenAI":
+        return model.with_structured_output(json_schema, method="function_calling", strict=False, include_raw=True)
+    return model.with_structured_output(json_schema, include_raw=True)
+
+
 def _openai_compatible(block):
     from langchain_openai import ChatOpenAI
 
