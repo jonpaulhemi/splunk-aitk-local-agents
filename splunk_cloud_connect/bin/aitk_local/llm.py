@@ -33,6 +33,21 @@ def chat_model(block):
     return _bedrock(block) if provider == BEDROCK else _openai_compatible(block)
 
 
+def with_tools(model, tools):
+    """`model` able to call `tools`.
+
+    OpenAI connections bind them non-strict: LangChain sends some models
+    (gpt-6 with tools) to the Responses API, which treats function tools as
+    strict unless told otherwise, and strict mode rejects MCP schemas with
+    optional arguments, such as the Splunk MCP Server's splunk_run_query.
+    """
+    if not tools:
+        return model
+    if type(model).__name__ == "ChatOpenAI":
+        return model.bind_tools(tools, strict=False)
+    return model.bind_tools(tools)
+
+
 def _openai_compatible(block):
     from langchain_openai import ChatOpenAI
 

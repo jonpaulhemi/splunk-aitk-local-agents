@@ -1,4 +1,10 @@
-"""A scripted OpenAI-compatible chat-completions server: the LLM edge in tests.
+"""A scripted OpenAI-compatible server: the LLM edge in tests.
+
+Serves chat completions and, for models LangChain sends there (gpt-6 with
+tools, for one), the Responses API. Responses requests are recorded and
+scripted in chat-completions shape, so scripts needn't care which API was
+used; like OpenAI, the Responses API treats function tools as strict unless
+they say `"strict": false`, and rejects schemas strict mode can't take.
 
 Each request is answered by `script(request_json)`, which returns the
 assistant's text, an assistant message dict (see `tool_call`), or a
@@ -11,6 +17,7 @@ import json
 import socketserver
 import threading
 import time
+import uuid
 
 
 class FakeLLM:
@@ -37,7 +44,9 @@ class FakeLLM:
                 pass
 
             def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                raw = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                responses_api = self.path.endswith("/responses")
+                body = _as_chat(raw) if responses_api else raw
                 with fake._lock:
                     headers = {k.lower(): v for k, v in self.headers.items()}
                     fake.requests.append({"path": self.path, "headers": headers, "body": body})
@@ -45,12 +54,15 @@ class FakeLLM:
                     fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
                 try:
                     time.sleep(fake.delay)
-                    answer = fake.script(body)
+                    rejected = _strict_schema_error(raw) if responses_api else None
+                    answer = rejected or fake.script(body)
                 finally:
                     with fake._lock:
                         fake.in_flight -= 1
                 if isinstance(answer, tuple):
                     status, payload = answer
+                elif responses_api:
+                    status, payload = 200, _response(body.get("model"), answer)
                 else:
                     status, payload = 200, _completion(body.get("model"), answer)
                 data = json.dumps(payload).encode()
@@ -90,6 +102,61 @@ def _completion(model, answer):
 
 def last_user_message(request):
     return [m for m in request["messages"] if m["role"] == "user"][-1]["content"]
+
+
+def _as_chat(body):
+    """A Responses API request in chat-completions shape."""
+    messages = [{"role": "system", "content": body["instructions"]}] if body.get("instructions") else []
+    for item in body.get("input") or []:
+        kind = item.get("type", "message")
+        if kind == "function_call_output":
+            messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]})
+        elif kind == "function_call":
+            messages.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": item["call_id"], "type": "function",
+                 "function": {"name": item["name"], "arguments": item["arguments"]}},
+            ]})
+        elif kind == "message":
+            content = item["content"]
+            if not isinstance(content, str):
+                content = "".join(part.get("text", "") for part in content)
+            messages.append({"role": "developer" if item["role"] == "system" else item["role"], "content": content})
+    tools = [{"type": "function", "function": {"name": t["name"], "parameters": t.get("parameters")}}
+             for t in body.get("tools") or [] if t.get("type") == "function"]
+    return {"model": body.get("model"), "messages": messages, "tools": tools, "responses_api": True}
+
+
+def _strict_schema_error(body):
+    """OpenAI's 400 for a strict function tool whose schema strict mode can't
+    take: every property required, and no additional properties."""
+    for tool in body.get("tools") or []:
+        if tool.get("type") != "function" or tool.get("strict", True) is False:
+            continue
+        schema = tool.get("parameters") or {}
+        if (schema.get("additionalProperties") is not False
+                or set(schema.get("required") or []) != set(schema.get("properties") or {})):
+            return 400, {"error": {"type": "invalid_request_error", "code": "invalid_json_schema", "param": "tools",
+                                   "message": f"Invalid schema for function '{tool['name']}'"}}
+    return None
+
+
+def _response(model, answer):
+    message = answer if isinstance(answer, dict) else {"role": "assistant", "content": answer}
+    if message.get("tool_calls"):
+        output = [{"type": "function_call", "id": f"fc_{c['id']}", "call_id": c["id"], "status": "completed",
+                   "name": c["function"]["name"], "arguments": c["function"]["arguments"]}
+                  for c in message["tool_calls"]]
+    else:
+        output = [{"type": "message", "id": f"msg_{uuid.uuid4().hex}", "role": "assistant", "status": "completed",
+                   "content": [{"type": "output_text", "text": message["content"], "annotations": []}]}]
+    return {
+        # Unique, as OpenAI's are: LangChain uses it as the message id, and
+        # LangGraph replaces earlier messages with the same id.
+        "id": f"resp_{uuid.uuid4().hex}", "object": "response", "created_at": int(time.time()), "model": model,
+        "status": "completed", "output": output, "parallel_tool_calls": True, "tool_choice": "auto", "tools": [],
+        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2,
+                  "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}},
+    }
 
 
 def tool_call(name, arguments, call_id="call_1"):

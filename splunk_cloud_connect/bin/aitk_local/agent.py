@@ -109,7 +109,7 @@ async def _answer(block, payload):
     trace = mcp_tools.Trace(servers)
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
-    graph = create_react_agent(model, tools=mcp_tools.tool_node(tools) if tools else [],
+    graph = create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
                                prompt=payload.get("system_prompt") or None)
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
                                 config={"callbacks": [trace.recorder]})

@@ -39,8 +39,8 @@ def mcp(splunk_home):
     server.stop()
 
 
-def _llm_block(llm):
-    return {"llm": {"provider": "Custom", "model": "qwen3:4b", "api_key": "sk-fake", "api_base": f"{llm.url}/v1",
+def _llm_block(llm, model="qwen3:4b"):
+    return {"llm": {"provider": "Custom", "model": model, "api_key": "sk-fake", "api_base": f"{llm.url}/v1",
                     "request_timeout": 30, "reasoning_effort": "NONE"}}
 
 
@@ -60,9 +60,10 @@ def _search_then_answer(request):
     return f"Found: {results[-1]}"
 
 
-def _run(aitk, splunkd, admin, llm, mcps, **params):
+def _run(aitk, splunkd, admin, llm, mcps, model="qwen3:4b", **params):
     agent = create_agent(aitk, splunkd, admin)
-    return run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), "Find errors", [{"x": 1}], mcps=mcps, **params)
+    return run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm, model), "Find errors", [{"x": 1}], mcps=mcps,
+                       **params)
 
 
 def test_agent_calls_a_selected_tool_and_its_result_reaches_the_answer(aitk, splunkd, admin, llm, mcp):
@@ -75,6 +76,20 @@ def test_agent_calls_a_selected_tool_and_its_result_reaches_the_answer(aitk, spl
     assert mcp.calls == [("search", {"query": "index=main error"})]
     # The server also has delete_index and broken; only the selected tool is offered.
     assert offered_tools(llm.requests[0]["body"]) == ["search"]
+
+
+def test_tools_with_optional_arguments_work_on_openais_responses_api(aitk, splunkd, admin, llm, mcp):
+    # Live on 0.7.0: LangChain sends gpt-6 models with tools to the Responses
+    # API, where function tools are strict unless they say otherwise, and
+    # splunk_run_query's optional arguments made OpenAI reject the schema.
+    llm.script = _search_then_answer
+
+    df = _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url)], model="gpt-6-luna")
+
+    assert df.iloc[0]["status"] == "success", df.iloc[0]["error"]
+    assert df.iloc[0]["result_1"] == "Found: 3 events for index=main error"
+    assert llm.requests[0]["path"] == "/v1/responses"
+    assert mcp.calls == [("search", {"query": "index=main error"})]
 
 
 def test_agent_without_mcps_offers_no_tools(aitk, splunkd, admin, llm):
