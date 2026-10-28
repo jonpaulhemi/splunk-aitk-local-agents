@@ -27,6 +27,10 @@ REQ_IN = REPO / "requirements" / "bundle.in"
 LOCK = REPO / "requirements" / "bundle.lock"
 INVENTORY = REPO / "docs" / "bundled-libraries.md"
 DIST = REPO / "dist"
+# Audio helpers, and the voice integrations built on them, that the agents
+# never import. AppInspect fails apps that call wave.open, so they're left out.
+UNUSED = ("openai/helpers", "langsmith/_internal/voice", *(f"langsmith/integrations/{name}" for name in (
+    "pipecat", "openai_realtime", "gemini_live", "google_adk_live", "livekit")))
 
 PIP_PLATFORM_ARGS = [
     "--only-binary=:all:",
@@ -66,7 +70,13 @@ def build():
          "--target", str(LIB), *PIP_PLATFORM_ARGS, "-r", str(LOCK))
     # Console scripts are useless inside splunkd and point at this machine's Python.
     shutil.rmtree(LIB / "bin", ignore_errors=True)
+    drop_unused()
     print(f"built {LIB.relative_to(REPO)}: {_size_mb(LIB):.1f} MB")
+
+
+def drop_unused():
+    for path in UNUSED:
+        shutil.rmtree(LIB / path, ignore_errors=True)
 
 
 def _size_mb(path):
@@ -142,6 +152,10 @@ def package():
             return None
         info.uid = info.gid = 0
         info.uname = info.gname = ""
+        # Shared libraries load without the execute bit; AppInspect fails
+        # executable files outside bin/.
+        if info.isfile() and parts[1:2] == ("lib",):
+            info.mode &= ~0o111
         return info
 
     with tarfile.open(out, "w:gz") as tar:
@@ -149,7 +163,7 @@ def package():
     size = f"{out.name} is {out.stat().st_size / 1e6:.1f} MB compressed."
     text = INVENTORY.read_text()
     INVENTORY.write_text(re.sub(rf"^{SIZE_LINE}.*$", SIZE_LINE + size, text, flags=re.M))
-    print(f"wrote {out.relative_to(REPO)}; {size}")
+    print(f"wrote {out}; {size}")
 
 
 if __name__ == "__main__":

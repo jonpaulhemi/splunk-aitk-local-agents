@@ -32,6 +32,8 @@ python tools/bundle.py build      # lib/ from bundle.lock (needs PyPI access)
 python tools/bundle.py package    # dist/splunk_cloud_connect-<version>.tgz
 ```
 
+AppInspect results and how to run it on this large package: [`docs/appinspect.md`](docs/appinspect.md).
+
 To change the library set, edit `requirements/bundle.in`, then run `lock`, `build` and `inventory` (which rewrites [`docs/bundled-libraries.md`](docs/bundled-libraries.md): licenses, compiled packages, sizes).
 
 After installing, `GET /services/aitk_local/diagnostics` (admin only) imports every bundled library inside splunkd, runs a one-step checkpointed graph, and reports the Python version and any library that was loaded from outside `lib/`.
