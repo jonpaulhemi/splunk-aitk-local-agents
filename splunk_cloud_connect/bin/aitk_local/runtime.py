@@ -10,6 +10,10 @@ Lifecycle (#16):
   GET    agent/aws_agentcore?runtime_ids=&memory_ids=
   DELETE agent/aws_agentcore/{runtime_id}
   GET    encryption/public-key
+
+Runs (#18):
+  POST   agent/aws_agentcore/invoke         encrypted payload (see envelope.py)
+         -> NDJSON, final line {"status": "completed", "success", "response", ...}
 """
 
 import functools
@@ -17,7 +21,7 @@ import hmac
 import json
 import urllib.parse
 
-from aitk_local import credentials, records
+from aitk_local import agent, credentials, envelope, records
 
 UNAUTHORIZED = {"status": 401, "payload": {"message": "Unauthorized"}}
 NO_SUCH_CALL = {"status": 404, "payload": {"message": "Not found"}}
@@ -36,6 +40,9 @@ def handle(request):
     path = request.get("path_info", "").strip("/").split("/")
     query = _query(request)
 
+    if path == ["agent", "aws_agentcore", "invoke"] and method == "POST":
+        body = _json_object(request.get("payload"))
+        return BAD_BODY if body is None else _invoke(body, token, rest_uri, system_token)
     if path == ["agent", "aws_agentcore"] and method == "POST":
         body = _json_object(request.get("payload"))
         return BAD_BODY if body is None else _create(body)
@@ -98,6 +105,17 @@ def _delete(runtime_id):
     # 200/202/204 as failure and would then never drop the agent from KV store.
     status = "DELETED" if records.delete(runtime_id) else "NOT_FOUND"
     return {"status": 200, "payload": {"runtime_id": runtime_id, "status": status}}
+
+
+def _invoke(body, token, rest_uri, system_token):
+    try:
+        key = _private_key(credentials.rsa_private_key_der(rest_uri, system_token))
+        payload = envelope.open_envelope(body, token, key)
+        chunk = agent.run(payload)
+    except envelope.DecryptError as e:
+        chunk = agent.failed(str(e))
+    # Responses are buffered by splunkd (spike #2), so the stream is just its final line.
+    return {"status": 200, "headers": {"Content-Type": "application/x-ndjson"}, "payload": json.dumps(chunk) + "\n"}
 
 
 @functools.cache
