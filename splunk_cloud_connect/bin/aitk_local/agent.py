@@ -103,14 +103,13 @@ def _within(seconds, coroutine):
 
 async def _answer(block, payload):
     """The answer and the tool calls made on the way."""
-    from langgraph.prebuilt import ToolNode, create_react_agent
+    from langgraph.prebuilt import create_react_agent
 
     tools, servers = await mcp_tools.load(payload.get("mcps") or [])
     trace = mcp_tools.Trace(servers)
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
-    # A failed tool call goes back to the model as an error result, not the end of the run.
-    graph = create_react_agent(model, tools=ToolNode(tools, handle_tool_errors=True) if tools else [],
+    graph = create_react_agent(model, tools=mcp_tools.tool_node(tools) if tools else [],
                                prompt=payload.get("system_prompt") or None)
     state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
                                 config={"callbacks": [trace.recorder]})

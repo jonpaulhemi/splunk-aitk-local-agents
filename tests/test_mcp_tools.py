@@ -117,6 +117,43 @@ def test_rejected_credentials_fail_clearly(aitk, splunkd, admin, llm, mcp):
     assert llm.requests == []
 
 
+def test_redirects_are_not_followed_so_credentials_stay_with_the_configured_server(aitk, splunkd, admin, llm,
+                                                                                  splunk_home):
+    elsewhere = FakeMCP(splunk_home / "server.pem", splunk_home / "server.key").start()
+    configured = FakeMCP(splunk_home / "server.pem", splunk_home / "server.key").start()
+    configured.redirect_to = elsewhere.url
+    try:
+        df = _run(aitk, splunkd, admin, llm,
+                  [_mcp_block(configured.url, type_="CUSTOM", headers={"X-API-Key": "api-key-1"})])
+    finally:
+        configured.stop()
+        elsewhere.stop()
+
+    assert df.iloc[0]["error"] == "MCP server 'splunk' couldn't be used: it answered HTTP 307"
+    assert elsewhere.requests == []
+
+
+def test_the_same_tool_selected_from_two_servers_fails_clearly(aitk, splunkd, admin, llm, mcp):
+    df = _run(aitk, splunkd, admin, llm, [_mcp_block(mcp.url, name="prod"), _mcp_block(mcp.url, name="test")])
+
+    assert df.iloc[0]["status"] == "error"
+    assert df.iloc[0]["error"] == ("Tool 'search' is selected from more than one MCP server ('prod', 'test'); "
+                                   "deselect it on all but one")
+    assert llm.requests == []
+
+
+def test_tools_that_need_approval_are_refused_until_approvals_are_supported(aitk, splunkd, admin, llm, mcp):
+    block = {**_mcp_block(mcp.url, tools=["search", "delete_index"]),
+             "approval_required_tools": ["delete_index"], "require_approval": True}
+
+    df = _run(aitk, splunkd, admin, llm, [block])
+
+    assert df.iloc[0]["status"] == "error"
+    assert df.iloc[0]["error"] == ("MCP server 'splunk' has tools that need approval (['delete_index']), "
+                                   "and approvals aren't supported by the local agent runtime yet")
+    assert mcp.calls == [] and llm.requests == []
+
+
 def test_untrusted_mcp_certificate_fails_clearly(aitk, splunkd, admin, llm, tmp_path):
     rogue = make_ca_and_server_cert(tmp_path, ["localhost", "127.0.0.1"])  # its CA isn't trusted
     server = FakeMCP(rogue["cert"], rogue["key"]).start()
@@ -172,7 +209,7 @@ def test_tool_calls_show_in_run_history(aitk, splunkd, admin, llm, mcp):
         ("call_b", "broken", "splunk", {}, "error"),
     ]
     assert trace[0]["result"] == "3 events for index=main error"
-    assert "the tool broke" in trace[1]["result"]
+    assert "the tool broke" in trace[1]["result"]  # the server's own error, sent to the model
     for t in trace:
         assert t["tool_call_start_time"] <= t["tool_call_end_time"]
 

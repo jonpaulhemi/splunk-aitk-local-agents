@@ -4,7 +4,7 @@ Serves three tools: `search` (echoes the query with a result count),
 `delete_index` (which agents in these tests never select) and `broken` (an MCP
 tool error). Every HTTP request's headers are recorded, and requests missing
 `required_headers` are answered 401 the way an MCP server rejects bad
-credentials. Tool calls are recorded as (name, arguments).
+credentials; with `redirect_to` set, every request is redirected there. Tool calls are recorded as (name, arguments).
 """
 
 import asyncio
@@ -23,6 +23,7 @@ class FakeMCP:
         self.requests = []  # lower-cased header dicts, one per HTTP request
         self.calls = []  # (tool name, arguments)
         self.required_headers = {}
+        self.redirect_to = None  # answer every request with a 307 to this URL
         self._server = None
         self._port = None
 
@@ -78,6 +79,11 @@ class FakeMCP:
             if scope["type"] == "http":
                 headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
                 fake.requests.append(headers)
+                if fake.redirect_to:
+                    await send({"type": "http.response.start", "status": 307,
+                                "headers": [(b"location", fake.redirect_to.encode())]})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
                 if any(headers.get(k.lower()) != v for k, v in fake.required_headers.items()):
                     await send({"type": "http.response.start", "status": 401,
                                 "headers": [(b"content-type", b"text/plain")]})
