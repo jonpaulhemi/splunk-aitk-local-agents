@@ -4,13 +4,13 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import llm, log
+from aitk_local import llm, log, mcp_tools
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
 # Blocks AI Toolkit sends that later tickets will use; for now only their key
 # names are logged, and only when they hold something.
-NOT_YET_USED = ("mcps", "knowledge_bases", "skills")
+NOT_YET_USED = ("knowledge_bases", "skills")
 DEFAULT_TIMEOUT = 300
 # Leave the worker room to report the timeout before isolated.run kills it.
 MAX_TIMEOUT = TIMEOUT_SECONDS - 60
@@ -34,9 +34,9 @@ def run(payload):
         timeout = _timeout(payload.get("agent_timeout"))
         if "hitl_response" in payload:
             raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
-        response = _within(timeout, _answer(block, payload))
-        outcome = _completed(True, response)
-    except (llm.UnusableConnection, NotSupported) as e:
+        response, trace = _within(timeout, _answer(block, payload))
+        outcome = _completed(True, response, tool_invocations=trace)
+    except (llm.UnusableConnection, mcp_tools.Unusable, NotSupported) as e:
         outcome = _completed(False, error=str(e))
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s")
@@ -44,8 +44,9 @@ def run(payload):
         outcome = _completed(False, error=_llm_error(e))
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
-        "invoke completed %s model=%s provider=%s success=%s duration=%.1fs%s",
-        ids, block.get("model"), block.get("provider"), outcome["success"], time.monotonic() - started,
+        "invoke completed %s model=%s provider=%s success=%s tool_calls=%d duration=%.1fs%s",
+        ids, block.get("model"), block.get("provider"), outcome["success"], len(outcome["tool_invocations"]),
+        time.monotonic() - started,
         f" error={outcome['error_message']}" if not outcome["success"] else "",
     )
     return outcome
@@ -101,13 +102,19 @@ def _within(seconds, coroutine):
 
 
 async def _answer(block, payload):
-    from langgraph.prebuilt import create_react_agent
+    """The answer and the tool calls made on the way."""
+    from langgraph.prebuilt import ToolNode, create_react_agent
 
+    tools, servers = await mcp_tools.load(payload.get("mcps") or [])
+    trace = mcp_tools.Trace(servers)
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
-    graph = create_react_agent(model, tools=[], prompt=payload.get("system_prompt") or None)
-    state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]})
-    return state["messages"][-1].text
+    # A failed tool call goes back to the model as an error result, not the end of the run.
+    graph = create_react_agent(model, tools=ToolNode(tools, handle_tool_errors=True) if tools else [],
+                               prompt=payload.get("system_prompt") or None)
+    state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
+                                config={"callbacks": [trace.recorder]})
+    return state["messages"][-1].text, trace.calls
 
 
 def failed(error):
@@ -115,12 +122,12 @@ def failed(error):
     return _completed(False, error=error)
 
 
-def _completed(success, response=None, error=None):
+def _completed(success, response=None, error=None, tool_invocations=()):
     chunk = {
         "status": "completed",
         "success": success,
         "response": response,
-        "tool_invocations": [],
+        "tool_invocations": list(tool_invocations),
         "hitl_status": None,
         "hitl_pending": [],
         "skills": [],

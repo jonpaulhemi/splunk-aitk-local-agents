@@ -1,7 +1,8 @@
 """A scripted OpenAI-compatible chat-completions server: the LLM edge in tests.
 
-Each request is answered by `script(request_json)`, which returns either the
-assistant's text, or a (status, body) pair for errors. `delay` seconds are
+Each request is answered by `script(request_json)`, which returns the
+assistant's text, an assistant message dict (see `tool_call`), or a
+(status, body) pair for errors. `delay` seconds are
 slept first. Requests are recorded, and `max_in_flight` counts overlap.
 """
 
@@ -74,16 +75,39 @@ class FakeLLM:
         self._server.server_close()
 
 
-def _completion(model, text):
+def _completion(model, answer):
+    message = answer if isinstance(answer, dict) else {"role": "assistant", "content": answer}
     return {
         "id": "chatcmpl-fake",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": message,
+                     "finish_reason": "tool_calls" if message.get("tool_calls") else "stop"}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     }
 
 
 def last_user_message(request):
     return [m for m in request["messages"] if m["role"] == "user"][-1]["content"]
+
+
+def tool_call(name, arguments, call_id="call_1"):
+    """An assistant message asking to call one tool."""
+    return {"role": "assistant", "content": None, "tool_calls": [
+        {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}},
+    ]}
+
+
+def tool_results(request):
+    """The text of each tool message sent back to the model so far."""
+    return [_text(m["content"]) for m in request["messages"] if m["role"] == "tool"]
+
+
+def _text(content):
+    # Tool results arrive as a string or as a list of text parts.
+    return content if isinstance(content, str) else "".join(p.get("text", "") for p in content)
+
+
+def offered_tools(request):
+    return sorted(t["function"]["name"] for t in request.get("tools") or [])

@@ -24,14 +24,14 @@ def create_agent(aitk, splunkd, admin, **settings):
     return manager.get_agent("triage", is_auth_by_pass=True)
 
 
-def run_aiagent(aitk, splunkd, admin, agent, llm_config, prompt, rows, **params):
+def run_aiagent(aitk, splunkd, admin, agent, llm_config, prompt, rows, mcps=(), **params):
     """Run `| aiagent` over `rows` with AI Toolkit's own processor; return the result frame."""
     import pandas as pd
 
     options = {
         "params": {"agent_name": agent["name"], "prompt": prompt, **params},
         "agent_config": agent,
-        "mcp_configs": {"mcps": []},
+        "mcp_configs": {"mcps": list(mcps)},
         "kb_configs": {"knowledge_bases": {"vector_dbs": []}},
         "llm_config": llm_config,
     }

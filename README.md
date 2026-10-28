@@ -48,6 +48,10 @@ It disables the two sync inputs and unschedules the telemetry searches through s
 
 Add `-d allowed_domains=mcp.corp.example,*.internal.example` to also set AI Toolkit's domain allowlist (`mlspl.conf [ai:AllowedDomains]`) and turn its enforcement on. In AI Toolkit 6.2.0 the allowlist only limits which MCP server URLs agents may use. LLM endpoints aren't checked against it, and MCP URLs must be HTTPS and can't be `localhost`, whatever the list says. Without `allowed_domains` the allowlist is left as it is.
 
+## MCP tools
+
+Agents use the MCP connections and tools selected on them in Agent Launchpad, over streamable HTTP. Each MCP server's TLS certificate is checked against the search head's operating system trust store (AI Toolkit's own MCP client doesn't check it). A server whose CA isn't there fails the run with "its TLS certificate isn't trusted by this search head". For the Splunk MCP Server app on a search head, that means splunkd's certificate must chain to a CA in the OS trust store, not Splunk's default self-signed one. Tool calls, with their arguments and results, show in Agent Run History.
+
 ## Layout
 
 - `splunk_cloud_connect/`: the Splunk app itself.
