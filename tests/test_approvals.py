@@ -254,3 +254,74 @@ def test_a_new_prompt_instead_of_a_decision_leaves_the_calls_unrun(aitk, splunkd
     assert tool_results(llm.requests[-1]["body"]) == ["No one approved this tool call, so it didn't run."]
     late = _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True)
     assert late["status"] == "error" and mcp.calls == []
+
+
+def _deletes_and_searches(request):
+    """Ask for an ungated search and a gated delete together; then report."""
+    results = tool_results(request)
+    if not results:
+        return {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_s", "type": "function", "function": {"name": "search", "arguments": '{"query": "x"}'}},
+            {"id": "call_d", "type": "function", "function": {"name": "delete_index", "arguments": '{"name": "old"}'}},
+        ]}
+    return f"Outcome: {sorted(results)}"
+
+
+def test_calls_asked_for_alongside_a_gated_one_wait_with_it_and_run_on_approval(aitk, splunkd, admin, agent, llm,
+                                                                                 mcp):
+    llm.script = _deletes_and_searches
+    session = f"approval-{uuid.uuid4().hex}"
+    paused = _run(aitk, splunkd, admin, agent, llm, mcp, "Search and clean up", session)
+    assert paused["hitl_status"] == "waiting_for_approval" and mcp.calls == []
+
+    row = _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True, tool_call_id="call_d")
+
+    assert row["status"] == "success", row["error"]
+    assert sorted(mcp.calls) == [("delete_index", {"name": "old"}), ("search", {"query": "x"})]
+
+
+def test_a_new_prompt_after_a_mixed_pause_answers_every_waiting_call(aitk, splunkd, admin, agent, llm, mcp):
+    llm.script = _deletes_and_searches
+    session = f"approval-{uuid.uuid4().hex}"
+    _run(aitk, splunkd, admin, agent, llm, mcp, "Search and clean up", session)
+    llm.script = lambda request: "hi"
+
+    row = _run(aitk, splunkd, admin, agent, llm, mcp, "Never mind.", session)
+
+    assert row["status"] == "success", row["error"]
+    assert mcp.calls == []
+    assert sorted(tool_results(llm.requests[-1]["body"])) == [
+        "No one approved this tool call, so it didn't run.", "This tool call didn't run."]
+
+
+def test_an_approved_tool_never_runs_twice_even_if_the_resumed_run_fails(aitk, splunkd, admin, agent, llm, mcp):
+    session, _ = _paused(aitk, splunkd, admin, agent, llm, mcp)
+    llm.script = lambda request: (500, {"error": {"message": "model exploded"}})
+    failed = _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True)
+    assert failed["status"] == "error"
+
+    again = _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True)
+    llm.script = lambda request: "ok"
+    later = _run(aitk, splunkd, admin, agent, llm, mcp, "What happened?", session)
+
+    assert again["status"] == "error" and "no run waiting for approval" in again["error"]
+    assert mcp.calls == [("delete_index", {"name": "old"})]
+    assert later["status"] == "success", later["error"]
+    assert tool_results(llm.requests[-1]["body"]) == ["deleted old"]
+
+
+def test_a_model_reusing_tool_call_ids_across_turns_still_gets_asked(aitk, splunkd, admin, agent, llm, mcp):
+    # Some OpenAI-compatible servers number tool calls per response, so call_1 comes back every turn.
+    session, _ = _paused(aitk, splunkd, admin, agent, llm, mcp)
+    _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True)
+    llm.script = lambda request: (tool_call("delete_index", {"name": "older"})
+                                  if tool_results(request) == ["deleted old"] else "done")
+
+    paused = _run(aitk, splunkd, admin, agent, llm, mcp, "And the older one", session)
+    pending = json.loads(paused["hitl_pending"])
+    row = _resume(aitk, splunkd, admin, agent, llm, mcp, session, approved=True,
+                  tool_call_id=pending[0]["tool_call_id"])
+
+    assert paused["hitl_status"] == "waiting_for_approval"
+    assert row["status"] == "success", row["error"]
+    assert mcp.calls == [("delete_index", {"name": "old"}), ("delete_index", {"name": "older"})]

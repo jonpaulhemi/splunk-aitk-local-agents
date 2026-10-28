@@ -134,7 +134,7 @@ async def _answer(block, payload, trace):
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
     system_prompt = payload.get("system_prompt") or None
-    gate = approvals.Gate(gated, trace.servers, trace)
+    gate = approvals.Gate(gated, trace)
 
     def model_input(messages):
         note = gate.take_note()
@@ -143,14 +143,17 @@ async def _answer(block, payload, trace):
 
     resuming = "hitl_response" in payload
 
-    def build(checkpointer, with_gate=False):
+    def build(checkpointer, gated_or_resuming):
         return create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
                                   prompt=lambda state: model_input(state["messages"]), checkpointer=checkpointer,
-                                  post_model_hook=gate if gate.gated or with_gate else None)
+                                  post_model_hook=gate if gated_or_resuming else None)
 
-    async with memory.session(payload) as (checkpointer, session):
+    # A resumed run that fails is kept: its approved calls may have run, and
+    # forgetting it would put them up for approval, and running, again.
+    async with memory.session(payload, forget_failures=not resuming) as (checkpointer, session):
         # A paused run waits in the gate, so look for one with the gate in place.
-        waiting = checkpointer and (await build(checkpointer, with_gate=True).aget_state(session)).interrupts
+        saved = await build(checkpointer, True).aget_state(session) if checkpointer else None
+        waiting = saved.interrupts if saved else ()
         if resuming:
             if not waiting:
                 raise approvals.NothingWaiting()
@@ -159,11 +162,11 @@ async def _answer(block, payload, trace):
             gate.gated |= {pending["name"] for pending in waiting[0].value}
             run_input = Command(resume=payload["hitl_response"])
         else:
-            # A new prompt instead of a decision: the waiting calls never run,
-            # and the model is told so (models reject calls left without results).
-            run_input = {"messages": approvals.unanswered(waiting[0].value if waiting else []) + [
+            earlier = saved.values.get("messages", []) if saved else []
+            # A new prompt instead of a decision: the waiting calls never run.
+            run_input = {"messages": approvals.unanswered(earlier, waiting[0].value if waiting else []) + [
                 HumanMessage(payload.get("task_prompt") or "")]}
-        graph = build(checkpointer, with_gate=resuming)
+        graph = build(checkpointer, bool(gate.gated) or resuming)
         # Saved once, when the run ends or pauses, rather than after every step.
         state = await graph.ainvoke(run_input, config={**session, "callbacks": [trace.recorder]}, durability="exit")
         if state.get("__interrupt__"):
@@ -175,6 +178,7 @@ async def _answer(block, payload, trace):
         # can use its tools first and then put the outcome into the shape.
         messages = model_input(state["messages"]) + [HumanMessage(structured.REQUEST)]
         return await structured.answer(model, messages, structured.schema(payload["structured_output"])), []
+
 
 def failed(error):
     log.get_logger().info("invoke failed before running: %s", error)
