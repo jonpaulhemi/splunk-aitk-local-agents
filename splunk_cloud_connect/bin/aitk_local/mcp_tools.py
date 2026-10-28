@@ -22,8 +22,9 @@ class Unusable(Exception):
 
 
 async def load(mcps):
-    """The tools selected on the agent, from every server in `mcps`, and a
-    {tool name: server name} map for the trace."""
+    """The tools selected on the agent, from every server in `mcps`, a
+    {tool name: server name} map for the trace, and the names of the tools
+    that need approval before they run."""
     per_server = await asyncio.gather(*(_server_tools(block) for block in mcps))
     servers = {}
     for block, tools in zip(mcps, per_server):
@@ -33,7 +34,9 @@ async def load(mcps):
                 raise Unusable(f"Tool '{tool.name}' is selected from more than one MCP server "
                                f"('{servers[tool.name]}', '{block.get('name')}'); deselect it on all but one")
             servers[tool.name] = block.get("name")
-    return [t for tools in per_server for t in tools], servers
+    gated = {name for block in mcps for name in block.get("approval_required_tools") or []
+             if servers.get(name) == block.get("name")}
+    return [t for tools in per_server for t in tools], servers, gated
 
 
 def tool_node(tools):
@@ -57,11 +60,6 @@ async def _server_tools(block):
     selected = set(block.get("tools") or [])
     if not selected:
         return []
-    # Until approvals (#23), running these without asking would skip a check the admin asked for.
-    needs_approval = sorted(selected & set(block.get("approval_required_tools") or []))
-    if needs_approval:
-        raise Unusable(f"MCP server '{name}' has tools that need approval ({needs_approval}), "
-                       "and approvals aren't supported by the local agent runtime yet")
     try:
         offered = await load_mcp_tools(None, connection=_connection(block), server_name=name,
                                        tool_interceptors=[_capped(config.max_tool_result_chars())])
@@ -169,6 +167,12 @@ class Trace:
                 "arguments": arguments or {}, "tool_call_start_time": _now()}
         self._open[run_id] = call
         self.calls.append(call)
+
+    def rejected(self, tool_call_id, name, arguments, result):
+        now = _now()
+        self.calls.append({"tool_call_id": tool_call_id, "name": name, "mcp_server": self.servers.get(name),
+                           "arguments": arguments or {}, "tool_call_start_time": now, "result": result,
+                           "tool_call_status": "rejected_by_human", "tool_call_end_time": now})
 
     def finished(self, run_id, result, status):
         call = self._open.pop(run_id, None)

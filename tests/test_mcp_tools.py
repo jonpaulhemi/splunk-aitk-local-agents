@@ -158,18 +158,6 @@ def test_the_same_tool_selected_from_two_servers_fails_clearly(aitk, splunkd, ad
     assert llm.requests == []
 
 
-def test_tools_that_need_approval_are_refused_until_approvals_are_supported(aitk, splunkd, admin, llm, mcp):
-    block = {**_mcp_block(mcp.url, tools=["search", "delete_index"]),
-             "approval_required_tools": ["delete_index"], "require_approval": True}
-
-    df = _run(aitk, splunkd, admin, llm, [block])
-
-    assert df.iloc[0]["status"] == "error"
-    assert df.iloc[0]["error"] == ("MCP server 'splunk' has tools that need approval (['delete_index']), "
-                                   "and approvals aren't supported by the local agent runtime yet")
-    assert mcp.calls == [] and llm.requests == []
-
-
 def test_untrusted_mcp_certificate_fails_clearly(aitk, splunkd, admin, llm, tmp_path):
     rogue = make_ca_and_server_cert(tmp_path, ["localhost", "127.0.0.1"])  # its CA isn't trusted
     server = FakeMCP(rogue["cert"], rogue["key"]).start()

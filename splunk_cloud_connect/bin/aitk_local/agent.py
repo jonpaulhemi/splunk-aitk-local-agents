@@ -4,7 +4,7 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import llm, log, mcp_tools, memory, structured
+from aitk_local import approvals, llm, log, mcp_tools, memory, structured
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
@@ -14,10 +14,6 @@ NOT_YET_USED = ("knowledge_bases", "skills")
 DEFAULT_TIMEOUT = 300
 # Leave the worker room to report the timeout before isolated.run kills it.
 MAX_TIMEOUT = TIMEOUT_SECONDS - 60
-
-
-class NotSupported(Exception):
-    pass
 
 
 def run(payload):
@@ -34,11 +30,9 @@ def run(payload):
     trace = mcp_tools.Trace()
     try:
         timeout = _timeout(payload.get("agent_timeout"))
-        if "hitl_response" in payload:
-            raise NotSupported("Approvals (human in the loop) aren't supported by the local agent runtime yet")
-        response = _within(timeout, _answer(block, payload, trace))
-        outcome = _completed(True, response, tool_invocations=trace.calls)
-    except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, NotSupported) as e:
+        response, pending = _within(timeout, _answer(block, payload, trace))
+        outcome = _completed(True, response, tool_invocations=trace.calls, hitl_pending=pending)
+    except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, approvals.NothingWaiting) as e:
         outcome = _completed(False, error=str(e), tool_invocations=trace.calls)
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls)
@@ -46,9 +40,10 @@ def run(payload):
         outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls)
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
-        "invoke completed %s model=%s provider=%s success=%s tool_calls=%d duration=%.1fs%s",
+        "invoke completed %s model=%s provider=%s success=%s tool_calls=%d duration=%.1fs%s%s",
         ids, block.get("model"), block.get("provider"), outcome["success"], len(outcome["tool_invocations"]),
         time.monotonic() - started,
+        f" {approvals.WAITING} pending={len(outcome['hitl_pending'])}" if outcome["hitl_pending"] else "",
         f" error={outcome['error_message']}" if not outcome["success"] else "",
     )
     return outcome
@@ -128,45 +123,72 @@ def _within(seconds, coroutine):
 
 
 async def _answer(block, payload, trace):
-    """The answer: text, or a dict for structured output. Tool calls are recorded in `trace`."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    """(answer, pending approvals): the answer is text, or a dict for structured
+    output; while tool calls wait for approval it's the model's text so far.
+    Tool calls are recorded in `trace`."""
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
+    from langgraph.types import Command
 
-    tools, trace.servers = await mcp_tools.load(payload.get("mcps") or [])
+    tools, trace.servers, gated = await mcp_tools.load(payload.get("mcps") or [])
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
     system_prompt = payload.get("system_prompt") or None
+    gate = approvals.Gate(gated, trace.servers, trace)
 
     def model_input(messages):
-        return ([SystemMessage(system_prompt)] if system_prompt else []) + memory.model_view(messages)
+        note = gate.take_note()
+        return ([SystemMessage(system_prompt)] if system_prompt else []) + memory.model_view(messages) + (
+            [HumanMessage(note)] if note else [])
+
+    resuming = "hitl_response" in payload
+
+    def build(checkpointer, with_gate=False):
+        return create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
+                                  prompt=lambda state: model_input(state["messages"]), checkpointer=checkpointer,
+                                  post_model_hook=gate if gate.gated or with_gate else None)
 
     async with memory.session(payload) as (checkpointer, session):
-        graph = create_react_agent(llm.with_tools(model, tools), tools=mcp_tools.tool_node(tools) if tools else [],
-                                   prompt=lambda state: model_input(state["messages"]), checkpointer=checkpointer)
-        # Saved once, at the end of the run, rather than after every step.
-        state = await graph.ainvoke({"messages": [("user", payload.get("task_prompt") or "")]},
-                                    config={**session, "callbacks": [trace.recorder]}, durability="exit")
+        # A paused run waits in the gate, so look for one with the gate in place.
+        waiting = checkpointer and (await build(checkpointer, with_gate=True).aget_state(session)).interrupts
+        if resuming:
+            if not waiting:
+                raise approvals.NothingWaiting()
+            # The calls that paused stay gated even if the connection stopped
+            # requiring approval meanwhile, so a rejection still holds.
+            gate.gated |= {pending["name"] for pending in waiting[0].value}
+            run_input = Command(resume=payload["hitl_response"])
+        else:
+            # A new prompt instead of a decision: the waiting calls never run,
+            # and the model is told so (models reject calls left without results).
+            run_input = {"messages": approvals.unanswered(waiting[0].value if waiting else []) + [
+                HumanMessage(payload.get("task_prompt") or "")]}
+        graph = build(checkpointer, with_gate=resuming)
+        # Saved once, when the run ends or pauses, rather than after every step.
+        state = await graph.ainvoke(run_input, config={**session, "callbacks": [trace.recorder]}, durability="exit")
+        if state.get("__interrupt__"):
+            asking = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
+            return (asking.text if asking else ""), state["__interrupt__"][0].value
         if payload.get("structured_output") is None:
-            return state["messages"][-1].text
+            return state["messages"][-1].text, []
         # One more call, as LangGraph's own response_format does, so the agent
         # can use its tools first and then put the outcome into the shape.
         messages = model_input(state["messages"]) + [HumanMessage(structured.REQUEST)]
-        return await structured.answer(model, messages, structured.schema(payload["structured_output"]))
-
+        return await structured.answer(model, messages, structured.schema(payload["structured_output"])), []
 
 def failed(error):
     log.get_logger().info("invoke failed before running: %s", error)
     return _completed(False, error=error)
 
 
-def _completed(success, response=None, error=None, tool_invocations=()):
+def _completed(success, response=None, error=None, tool_invocations=(), hitl_pending=()):
     chunk = {
         "status": "completed",
         "success": success,
         "response": response,
         "tool_invocations": list(tool_invocations),
-        "hitl_status": None,
-        "hitl_pending": [],
+        "hitl_status": approvals.WAITING if hitl_pending else None,
+        "hitl_pending": list(hitl_pending),
         "skills": [],
     }
     if not success:
