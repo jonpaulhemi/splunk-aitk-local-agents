@@ -4,6 +4,8 @@ A Splunk app that lets AI Toolkit 6.2.0 Agent Launchpad agents run on-prem witho
 
 Design: [`docs/DESIGN.md`](docs/DESIGN.md). Research behind it: [`docs/research/`](docs/research/). Spec: issue #13.
 
+Installing, upgrading this app or AI Toolkit, and the known AI Toolkit issue: [`docs/install.md`](docs/install.md). Making a release, with the acceptance run and the no-cloud-traffic check: [`docs/release.md`](docs/release.md). Changes: [`docs/release-notes.md`](docs/release-notes.md).
+
 > **Cannot coexist with Splunk's Cloud Connect app.** This app uses Cloud Connect's app id (`splunk_cloud_connect`) because that is where AI Toolkit looks. Uninstall the real Cloud Connect app first, and don't install it later.
 
 **Prerequisite:** AI Toolkit's own REST handlers won't load without the Python for Scientific Computing add-on (`Splunk_SA_Scientific_Python_linux_x86_64`), so install it as AI Toolkit's docs require.
@@ -68,6 +70,7 @@ The file holds the conversations, tool results included, in plain form, the same
 
 - `splunk_cloud_connect/`: the Splunk app itself.
 - `requirements/`, `tools/bundle.py`: the bundled-library build.
+- `tools/contract.py`, `tools/acceptance.py`, `tools/egress_watch.py`: contract tests in one command, and the release acceptance run ([`docs/release.md`](docs/release.md)).
 - `tests/`: contract tests that run AI Toolkit's own client code against this app's handlers, served by a fake splunkd.
 - `spike/`: throwaway spike from #2, kept for re-running on other Splunk versions.
 
@@ -97,4 +100,4 @@ python tools/bundle.py build
 AITK_APP=/path/to/Splunk_ML_Toolkit pytest
 ```
 
-The tests refuse to run without `AITK_APP`.
+The tests refuse to run without `AITK_APP`. `python tools/contract.py <AI Toolkit .tgz or folder>` does the same in one command, unpacking a package into a temporary folder first.
