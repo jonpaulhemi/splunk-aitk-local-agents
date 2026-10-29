@@ -41,7 +41,7 @@ From any machine that can reach port 8089, run:
 SPLUNK_PASSWORD=... python3 tools/acceptance.py https://<search head FQDN>:8089 \
     --expect-version <version> \
     --openai-agent <OpenAI-compatible agent with an ungated Splunk MCP tool> \
-    --bedrock-agent <Bedrock GovCloud agent with an ungated Splunk MCP tool> \
+    --bedrock-agent <Bedrock agent with an ungated Splunk MCP tool> \
     --approval-agent <agent whose Splunk MCP tool requires approval> \
     --out acceptance.json
 ```
@@ -54,7 +54,7 @@ The three agents are templates, and they aren't changed. The script copies their
 - a plain answer, an MCP tool call, and session memory, each on both connections
 - structured output
 - an approval pause, followed by an approval that runs the tool exactly once
-- that Bedrock ran in a `us-gov-` region, using `aitk_local.log` in `index=_internal`
+- that the Bedrock runs reached this app's runtime, and in which AWS region, using `aitk_local.log` in `index=_internal`
 - that no prompt appears in that log
 
 At the end, the script deletes its agents.

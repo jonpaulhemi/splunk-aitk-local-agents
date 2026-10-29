@@ -5,14 +5,14 @@ Run it from any machine that can reach the search head's management port,
 after installing the release .tgz and restarting splunkd:
 
     SPLUNK_PASSWORD=... python3 acceptance.py https://sh.example.internal:8089 \\
-        --openai-agent AitkLocal070OpenAIMCP --bedrock-agent MyGovCloudAgent \\
+        --openai-agent AitkLocal070OpenAIMCP --bedrock-agent MyBedrockAgent \\
         --approval-agent AitkLocal0100Approvals --out acceptance.json
 
 The three agents are templates you already have in Agent Launchpad:
 
 - --openai-agent: an OpenAI-compatible connection with a Splunk MCP tool that
   doesn't need approval.
-- --bedrock-agent: a Bedrock GovCloud connection with the same kind of tool.
+- --bedrock-agent: a Bedrock connection with the same kind of tool.
 - --approval-agent: an agent whose MCP tool requires approval.
 
 The script copies their connections into new agents named
@@ -351,8 +351,6 @@ class Run:
                 time.sleep(10)
         if not regions:
             raise Failed("no Bedrock invoke with a region found in aitk_local.log (index=_internal)")
-        if not all(r.startswith("us-gov-") for r in regions):
-            raise Failed(f"Bedrock ran in {regions}, not a GovCloud region")
         return {"regions": regions}
 
     def log_privacy(self):
@@ -424,7 +422,7 @@ def main():
         if "approval" in agents:
             run.check("approval", lambda: run.approval(agents["approval"]))
         if "bedrock" in agents:
-            run.check("bedrock_govcloud", run.bedrock_region)
+            run.check("bedrock_region", run.bedrock_region)
         run.check("log_privacy", run.log_privacy)
     if run.created:
         run.check("delete_agents", run.delete_all)
