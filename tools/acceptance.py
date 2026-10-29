@@ -14,6 +14,12 @@ The three agents are templates you already have in Agent Launchpad:
   doesn't need approval.
 - --bedrock-agent: a Bedrock connection with the same kind of tool.
 - --approval-agent: an agent whose MCP tool requires approval.
+- --kb-connection (optional): the name of an AWS KB knowledge base connection,
+  with --kb-question, a question only its documents answer. Without it the
+  knowledge base check is reported as skipped.
+
+The skills check creates its own skill, aitk_acceptance_<time>_skill, and
+deletes it at the end.
 
 The script copies their connections into new agents named
 aitk_acceptance_<time>_..., runs every check through `| aiagent`, and deletes
@@ -167,6 +173,7 @@ class Run:
         self.args = args
         self.prefix = "aitk_acceptance_" + time.strftime("%Y%m%d%H%M%S", time.gmtime())
         self.created = []
+        self.skills_created = []
         self.checks = {}
         self.runtime_ids = {}
         # Given in memory checks, then looked for in aitk_local.log.
@@ -309,6 +316,34 @@ class Run:
             time.sleep(3)
         return False
 
+    def create_skill(self):
+        """A skill the agent has to load to answer: its text holds a code word nothing else gives."""
+        name = f"{self.prefix}_skill"
+        word = "osprey" + secrets.token_hex(3)
+        self.code_words.append(word)
+        self.skills_created.append(name)
+        status, body = self.splunkd.call("POST", self._skills(), body={
+            "name": name, "category": "acceptance",
+            "description": "Use whenever the user asks for the release acceptance check phrase.",
+            "skill_text": f"Reply with exactly the phrase {word} and nothing else."})
+        if status not in (200, 201):
+            raise Failed(f"creating skill {name} returned HTTP {status}: {_short(body)}")
+        self.skill_word = word
+        return {"skill": name}
+
+    def delete_skills(self):
+        left = []
+        for name in self.skills_created:
+            status, _ = self.splunkd.call("DELETE", f"{self._skills()}/{urllib.parse.quote(name)}")
+            if status not in (200, 404):
+                left.append(name)
+        if left:
+            raise Failed(f"skills not deleted: {left}")
+        return {"deleted": len(self.skills_created)}
+
+    def _skills(self):
+        return self._agents().rsplit("/", 1)[0] + "/agent_skills"
+
     # Checks on one agent
 
     def answers(self, agent):
@@ -346,6 +381,30 @@ class Run:
                 and isinstance(answer.get("word_count"), int)):
             raise Failed(f"result_1 doesn't match the schema (keys {sorted(answer) if isinstance(answer, dict) else type(answer).__name__})")
         return {}
+
+    def loads_skill(self, agent):
+        row = aiagent(self.splunkd, agent, "Give me the release acceptance check phrase.")
+        try:
+            loaded = [s.get("name") if isinstance(s, dict) else s for s in json.loads(row.get("skills") or "[]")]
+        except ValueError:
+            raise Failed("the row's skills field isn't JSON") from None
+        skill = self.skills_created[0]
+        if skill not in loaded:
+            raise Failed(f"the skill wasn't reported as loaded (loaded: {len(loaded)})")
+        if not any(t.get("type") == "skill" and t.get("name") == "load_skill" for t in _trace(row)):
+            raise Failed("no load_skill call of type skill in the trace")
+        if self.skill_word not in (row.get("result_1") or "").lower():
+            raise Failed("the answer didn't follow the skill")
+        return {}
+
+    def searches_knowledge_base(self, agent):
+        row = aiagent(self.splunkd, agent, self.args.kb_question)
+        searches = [t for t in _succeeded_calls(row) if str(t.get("name", "")).startswith("search_knowledge_base_")]
+        if not searches:
+            raise Failed(f"no knowledge base search succeeded (trace has {len(_trace(row))} entries)")
+        if not (row.get("result_1") or "").strip():
+            raise Failed("empty answer after the search")
+        return {"searches": len(searches)}
 
     def approval(self, agent):
         session = f"{self.prefix}_{secrets.token_hex(4)}"
@@ -422,9 +481,13 @@ def main():
     parser.add_argument("--ca-file")
     parser.add_argument("--expect-version", help="fail unless this app version is installed")
     parser.add_argument("--mcp-question", default=DEFAULT_MCP_QUESTION)
+    parser.add_argument("--kb-connection", help="an AWS KB knowledge base connection to check searches with")
+    parser.add_argument("--kb-question", help="a question only that knowledge base's documents answer")
     parser.add_argument("--ready-timeout", type=int, default=180)
     parser.add_argument("--out", help="write the JSON report here as well as printing it")
     args = parser.parse_args()
+    if bool(args.kb_connection) != bool(args.kb_question):
+        parser.error("--kb-connection and --kb-question go together")
 
     token = os.environ.get("SPLUNK_TOKEN")
     password = None if token else (os.environ.get("SPLUNK_PASSWORD") or getpass.getpass(f"{args.user} password: "))
@@ -434,11 +497,16 @@ def main():
     if run.check("installed", run.installed) and run.check("setup", run.setup):
         run.check("diagnostics", run.diagnostics)
         agents = {}
-        for kind, template, extra in (
-                ("openai", args.openai_agent, {}),
-                ("bedrock", args.bedrock_agent, {}),
-                ("approval", args.approval_agent, {}),
-                ("structured", args.openai_agent, {"with_tools": False, "structured_output": STRUCTURED_OUTPUT})):
+        kinds = [("openai", args.openai_agent, {}),
+                 ("bedrock", args.bedrock_agent, {}),
+                 ("approval", args.approval_agent, {}),
+                 ("structured", args.openai_agent, {"with_tools": False, "structured_output": STRUCTURED_OUTPUT})]
+        if run.check("create_skill", run.create_skill):
+            kinds.append(("skills", args.openai_agent, {"with_tools": False, "skills": [run.skills_created[0]]}))
+        if args.kb_connection:
+            kinds.append(("knowledge_base", args.openai_agent, {
+                "with_tools": False, "knowledge_bases": [{"type": "VECTOR_DB", "name": args.kb_connection}]}))
+        for kind, template, extra in kinds:
             def create(kind=kind, template=template, extra=extra):
                 details = run.create(kind, template, **extra)
                 agents[kind] = details["agent"]
@@ -453,17 +521,27 @@ def main():
             run.check("structured_output", lambda: run.structured(agents["structured"]))
         if "approval" in agents:
             run.check("approval", lambda: run.approval(agents["approval"]))
+        if "skills" in agents:
+            run.check("skills", lambda: run.loads_skill(agents["skills"]))
+        if "knowledge_base" in agents:
+            run.check("knowledge_base", lambda: run.searches_knowledge_base(agents["knowledge_base"]))
+        elif not args.kb_connection:
+            run.checks["knowledge_base"] = {"pass": True, "skipped": "no --kb-connection given", "seconds": 0}
+            print("SKIP knowledge_base: no --kb-connection given", file=sys.stderr)
         if "bedrock" in agents:
             run.check("bedrock_region", run.bedrock_region)
         run.check("log_privacy", run.log_privacy)
     if run.created:
         run.check("delete_agents", run.delete_all)
+    if run.skills_created:
+        run.check("delete_skills", run.delete_skills)
 
     report = {
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
         "duration_s": round(time.time() - started, 1),
         "search_head": urllib.parse.urlparse(args.base).hostname,
-        "templates": {"openai": args.openai_agent, "bedrock": args.bedrock_agent, "approval": args.approval_agent},
+        "templates": {"openai": args.openai_agent, "bedrock": args.bedrock_agent, "approval": args.approval_agent,
+                      **({"kb_connection": args.kb_connection} if args.kb_connection else {})},
         "pass": all(c["pass"] for c in run.checks.values()),
         "checks": run.checks,
     }

@@ -29,7 +29,7 @@ Leave it running for the next step. It records the following, and fails if any n
 - every TLS server name or HTTP proxy CONNECT host
 - every new outbound connection
 
-The names it lists should be your LLM endpoint, AWS Bedrock (and STS, if the connection assumes a role), and your MCP servers. Nothing else should appear, apart from Splunk's platform telemetry (`quickdraw.splunk.com`). That goes under `platform_telemetry` and doesn't fail the check, because it's a server-wide setting outside AI Toolkit (see `docs/install.md`).
+The names it lists should be your LLM endpoint, AWS Bedrock (and STS, if a connection assumes a role), Bedrock Agent Runtime (`bedrock-agent-runtime.<region>.amazonaws.com`) if you check a knowledge base, and your MCP servers. Nothing else should appear, apart from Splunk's platform telemetry (`quickdraw.splunk.com`). That goes under `platform_telemetry` and doesn't fail the check, because it's a server-wide setting outside AI Toolkit (see `docs/install.md`).
 
 It can only fail on names it sees. A connection made by IP address, or one whose name the capture missed, goes under `connections_without_a_name` instead. Look each one up (`dig -x`, or your firewall's logs) before calling the run clean. The setup check in step 4 covers the scheduled traffic that wouldn't fire during a short capture: the sync inputs and telemetry searches must all be off.
 
@@ -43,8 +43,11 @@ SPLUNK_PASSWORD=... python3 tools/acceptance.py https://<search head FQDN>:8089 
     --openai-agent <OpenAI-compatible agent with an ungated Splunk MCP tool> \
     --bedrock-agent <Bedrock agent with an ungated Splunk MCP tool> \
     --approval-agent <agent whose Splunk MCP tool requires approval> \
+    [--kb-connection <AWS KB knowledge base connection> --kb-question "<a question only its documents answer>"] \
     --out acceptance.json
 ```
+
+Without `--kb-connection`, the knowledge base check is reported as skipped. [`knowledge-base-setup.md`](knowledge-base-setup.md) walks through making a small knowledge base for it.
 
 The three agents are templates, and they aren't changed. The script copies their connections into new `aitk_acceptance_*` agents and checks the following:
 - the install and the Cloud Connect stand-in
@@ -54,10 +57,12 @@ The three agents are templates, and they aren't changed. The script copies their
 - a plain answer, an MCP tool call, and session memory, each on both connections
 - structured output
 - an approval pause, followed by an approval that runs the tool exactly once
+- skills: a skill the script creates, which the agent has to load to answer, shows as loaded with a `load_skill` call in the trace
+- with `--kb-connection`, a knowledge base search that succeeds and feeds the answer
 - that the Bedrock runs reached this app's runtime, and in which AWS region, using `aitk_local.log` in `index=_internal`
-- that no prompt appears in that log
+- that no prompt, and no skill's text, appears in that log
 
-At the end, the script deletes its agents.
+At the end, the script deletes its agents and its skill.
 
 Then stop the capture with Ctrl-C. Both scripts exit non-zero on failure.
 
