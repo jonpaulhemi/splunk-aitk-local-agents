@@ -4,13 +4,13 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import approvals, llm, log, mcp_tools, memory, structured
+from aitk_local import approvals, llm, log, mcp_tools, memory, skills, structured
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
 # Blocks AI Toolkit sends that later tickets will use; for now only their key
 # names are logged, and only when they hold something.
-NOT_YET_USED = ("knowledge_bases", "skills")
+NOT_YET_USED = ("knowledge_bases",)
 DEFAULT_TIMEOUT = 300
 # Leave the worker room to report the timeout before isolated.run kills it.
 MAX_TIMEOUT = TIMEOUT_SECONDS - 60
@@ -28,16 +28,20 @@ def run(payload):
     timeout = DEFAULT_TIMEOUT
     # Kept on failure too, so run history shows what the agent did before it stopped.
     trace = mcp_tools.Trace()
+    attached = skills.Skills(payload.get("skills"))
     try:
         timeout = _timeout(payload.get("agent_timeout"))
-        response, pending = _within(timeout, _answer(block, payload, trace))
-        outcome = _completed(True, response, tool_invocations=trace.calls, hitl_pending=pending)
+        response, pending = _within(timeout, _answer(block, payload, trace, attached))
+        outcome = _completed(True, response, tool_invocations=trace.calls, hitl_pending=pending,
+                             skills=attached.reported())
     except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, approvals.NothingWaiting) as e:
-        outcome = _completed(False, error=str(e), tool_invocations=trace.calls)
+        outcome = _completed(False, error=str(e), tool_invocations=trace.calls, skills=attached.reported())
     except TimeoutError:
-        outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls)
+        outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls,
+                             skills=attached.reported())
     except Exception as e:
-        outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls)
+        outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls,
+                             skills=attached.reported())
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
         "invoke completed %s model=%s provider=%s%s success=%s tool_calls=%d duration=%.1fs%s%s",
@@ -124,18 +128,20 @@ def _within(seconds, coroutine):
         loop.close()
 
 
-async def _answer(block, payload, trace):
+async def _answer(block, payload, trace, attached):
     """(answer, pending approvals): the answer is text, or a dict for structured
     output; while tool calls wait for approval it's the model's text so far.
-    Tool calls are recorded in `trace`."""
+    Tool calls are recorded in `trace`, and skills loaded in `attached`."""
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
     from langgraph.types import Command
 
     tools, trace.servers, gated = await mcp_tools.load(payload.get("mcps") or [])
+    tools += attached.tools()
+    trace.kinds[skills.TOOL] = skills.KIND
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
-    system_prompt = payload.get("system_prompt") or None
+    system_prompt = "\n\n".join(filter(None, [payload.get("system_prompt"), attached.prompt()])) or None
     gate = approvals.Gate(gated, trace)
 
     def model_input(messages):
@@ -187,7 +193,7 @@ def failed(error):
     return _completed(False, error=error)
 
 
-def _completed(success, response=None, error=None, tool_invocations=(), hitl_pending=()):
+def _completed(success, response=None, error=None, tool_invocations=(), hitl_pending=(), skills=()):
     chunk = {
         "status": "completed",
         "success": success,
@@ -195,7 +201,7 @@ def _completed(success, response=None, error=None, tool_invocations=(), hitl_pen
         "tool_invocations": list(tool_invocations),
         "hitl_status": approvals.WAITING if hitl_pending else None,
         "hitl_pending": list(hitl_pending),
-        "skills": [],
+        "skills": list(skills),
     }
     if not success:
         chunk["error_message"] = error

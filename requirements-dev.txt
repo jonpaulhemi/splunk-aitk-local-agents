@@ -6,4 +6,4 @@ splunk-sdk
 pandas
 boto3
 pydantic
-mcp
+mcp<2  # the fake MCP server uses FastMCP, which mcp 2 renamed; the bundle pins mcp 1.x too

@@ -26,10 +26,18 @@ def create_agent(aitk, splunkd, admin, **settings):
     return manager.get_agent(settings["name"], is_auth_by_pass=True)
 
 
-def run_aiagent(aitk, splunkd, admin, agent, llm_config, prompt, rows, mcps=(), **params):
-    """Run `| aiagent` over `rows` with AI Toolkit's own processor; return the result frame."""
+def run_aiagent(aitk, splunkd, admin, agent, llm_config, prompt, rows, mcps=(), skills=(), **params):
+    """Run `| aiagent` over `rows` with AI Toolkit's own processor; return the result frame.
+
+    `skills` are {name, description, skill_text}, as AI Toolkit's aiagent
+    command resolves them onto the agent's latest version before running it.
+    """
+    import copy
+
     import pandas as pd
 
+    agent = copy.deepcopy(agent)
+    agent["details"]["versions"][0]["skills"] = list(skills)
     options = {
         "params": {"agent_name": agent["name"], "prompt": prompt, **params},
         "agent_config": agent,

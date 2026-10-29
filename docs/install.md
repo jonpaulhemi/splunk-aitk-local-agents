@@ -31,6 +31,8 @@ To also set AI Toolkit's MCP domain allowlist, add `-d allowed_domains=...`. The
 Next, set up connections and agents in AI Toolkit as usual:
 - an LLM connection, either Custom (OpenAI-compatible) or Bedrock
 - MCP connections, marking tools as requiring approval where needed
+- skills, if your agents use them; Splunk-managed skills aren't available offline, since their catalog comes from Splunk's cloud
+- knowledge base connections (AWS KB), if your agents search one; [knowledge-base-setup.md](knowledge-base-setup.md) walks through creating a small one
 - agents in Agent Launchpad
 
 ## Upgrading this app
