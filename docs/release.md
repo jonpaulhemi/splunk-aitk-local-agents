@@ -43,11 +43,12 @@ SPLUNK_PASSWORD=... python3 tools/acceptance.py https://<search head FQDN>:8089 
     --openai-agent <OpenAI-compatible agent with an ungated Splunk MCP tool> \
     --bedrock-agent <Bedrock agent with an ungated Splunk MCP tool> \
     --approval-agent <agent whose Splunk MCP tool requires approval> \
-    [--kb-connection <AWS KB knowledge base connection> --kb-question "<a question only its documents answer>"] \
+    [--knowledge-base <AWS KB connection name> --kb-question "<a question only its documents answer>" \
+     --kb-expect "<a word the answer must contain>"] \
     --out acceptance.json
 ```
 
-Without `--kb-connection`, the knowledge base check is reported as skipped. [`knowledge-base-setup.md`](knowledge-base-setup.md) walks through making a small knowledge base for it.
+Without `--knowledge-base`, the knowledge base check is reported as skipped. [`knowledge-base-setup.md`](knowledge-base-setup.md) walks through making a small knowledge base for it.
 
 The three agents are templates, and they aren't changed. The script copies their connections into new `aitk_acceptance_*` agents and checks the following:
 - the install and the Cloud Connect stand-in
@@ -58,7 +59,7 @@ The three agents are templates, and they aren't changed. The script copies their
 - structured output
 - an approval pause, followed by an approval that runs the tool exactly once
 - skills: a skill the script creates, which the agent has to load to answer, shows as loaded with a `load_skill` call in the trace
-- with `--kb-connection`, a knowledge base search that succeeds and feeds the answer
+- with `--knowledge-base`, a knowledge base search that succeeds, and an answer containing the `--kb-expect` text
 - that the Bedrock runs reached this app's runtime, and in which AWS region, using `aitk_local.log` in `index=_internal`
 - that no prompt, and no skill's text, appears in that log
 

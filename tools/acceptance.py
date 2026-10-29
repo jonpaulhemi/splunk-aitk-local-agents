@@ -14,8 +14,9 @@ The three agents are templates you already have in Agent Launchpad:
   doesn't need approval.
 - --bedrock-agent: a Bedrock connection with the same kind of tool.
 - --approval-agent: an agent whose MCP tool requires approval.
-- --kb-connection (optional): the name of an AWS KB knowledge base connection,
-  with --kb-question, a question only its documents answer. Without it the
+- --knowledge-base (optional): the name of an AWS KB knowledge base
+  connection, with --kb-question, a question only its documents answer, and
+  --kb-expect, a word or phrase the answer must contain. Without it the
   knowledge base check is reported as skipped.
 
 The skills check creates its own skill, aitk_acceptance_<time>_skill, and
@@ -174,6 +175,7 @@ class Run:
         self.prefix = "aitk_acceptance_" + time.strftime("%Y%m%d%H%M%S", time.gmtime())
         self.created = []
         self.skills_created = []
+        self.skill_word = None
         self.checks = {}
         self.runtime_ids = {}
         # Given in memory checks, then looked for in aitk_local.log.
@@ -334,8 +336,14 @@ class Run:
     def delete_skills(self):
         left = []
         for name in self.skills_created:
-            status, _ = self.splunkd.call("DELETE", f"{self._skills()}/{urllib.parse.quote(name)}")
-            if status not in (200, 404):
+            path = f"{self._skills()}/{urllib.parse.quote(name)}"
+            # As with agents, only a GET says it's gone: AI Toolkit answers 404
+            # for "not authorized" too, and replies can be corrupted.
+            for _ in range(2):
+                self.splunkd.call("DELETE", path)
+                if self.splunkd.call("GET", self._skills(), {"name": name})[0] == 404:
+                    break
+            else:
                 left.append(name)
         if left:
             raise Failed(f"skills not deleted: {left}")
@@ -402,8 +410,8 @@ class Run:
         searches = [t for t in _succeeded_calls(row) if str(t.get("name", "")).startswith("search_knowledge_base_")]
         if not searches:
             raise Failed(f"no knowledge base search succeeded (trace has {len(_trace(row))} entries)")
-        if not (row.get("result_1") or "").strip():
-            raise Failed("empty answer after the search")
+        if self.args.kb_expect.lower() not in (row.get("result_1") or "").lower():
+            raise Failed("the answer didn't contain the --kb-expect text")
         return {"searches": len(searches)}
 
     def approval(self, agent):
@@ -481,13 +489,14 @@ def main():
     parser.add_argument("--ca-file")
     parser.add_argument("--expect-version", help="fail unless this app version is installed")
     parser.add_argument("--mcp-question", default=DEFAULT_MCP_QUESTION)
-    parser.add_argument("--kb-connection", help="an AWS KB knowledge base connection to check searches with")
+    parser.add_argument("--knowledge-base", help="an AWS KB knowledge base connection to check searches with")
     parser.add_argument("--kb-question", help="a question only that knowledge base's documents answer")
+    parser.add_argument("--kb-expect", help="a word or phrase the answer to --kb-question must contain")
     parser.add_argument("--ready-timeout", type=int, default=180)
     parser.add_argument("--out", help="write the JSON report here as well as printing it")
     args = parser.parse_args()
-    if bool(args.kb_connection) != bool(args.kb_question):
-        parser.error("--kb-connection and --kb-question go together")
+    if len({bool(args.knowledge_base), bool(args.kb_question), bool(args.kb_expect)}) > 1:
+        parser.error("--knowledge-base, --kb-question and --kb-expect go together")
 
     token = os.environ.get("SPLUNK_TOKEN")
     password = None if token else (os.environ.get("SPLUNK_PASSWORD") or getpass.getpass(f"{args.user} password: "))
@@ -503,9 +512,9 @@ def main():
                  ("structured", args.openai_agent, {"with_tools": False, "structured_output": STRUCTURED_OUTPUT})]
         if run.check("create_skill", run.create_skill):
             kinds.append(("skills", args.openai_agent, {"with_tools": False, "skills": [run.skills_created[0]]}))
-        if args.kb_connection:
+        if args.knowledge_base:
             kinds.append(("knowledge_base", args.openai_agent, {
-                "with_tools": False, "knowledge_bases": [{"type": "VECTOR_DB", "name": args.kb_connection}]}))
+                "with_tools": False, "knowledge_bases": [{"type": "VECTOR_DB", "name": args.knowledge_base}]}))
         for kind, template, extra in kinds:
             def create(kind=kind, template=template, extra=extra):
                 details = run.create(kind, template, **extra)
@@ -525,9 +534,9 @@ def main():
             run.check("skills", lambda: run.loads_skill(agents["skills"]))
         if "knowledge_base" in agents:
             run.check("knowledge_base", lambda: run.searches_knowledge_base(agents["knowledge_base"]))
-        elif not args.kb_connection:
-            run.checks["knowledge_base"] = {"pass": True, "skipped": "no --kb-connection given", "seconds": 0}
-            print("SKIP knowledge_base: no --kb-connection given", file=sys.stderr)
+        elif not args.knowledge_base:
+            run.checks["knowledge_base"] = {"pass": True, "skipped": "no --knowledge-base given", "seconds": 0}
+            print("SKIP knowledge_base: no --knowledge-base given", file=sys.stderr)
         if "bedrock" in agents:
             run.check("bedrock_region", run.bedrock_region)
         run.check("log_privacy", run.log_privacy)
@@ -541,7 +550,7 @@ def main():
         "duration_s": round(time.time() - started, 1),
         "search_head": urllib.parse.urlparse(args.base).hostname,
         "templates": {"openai": args.openai_agent, "bedrock": args.bedrock_agent, "approval": args.approval_agent,
-                      **({"kb_connection": args.kb_connection} if args.kb_connection else {})},
+                      **({"knowledge_base": args.knowledge_base} if args.knowledge_base else {})},
         "pass": all(c["pass"] for c in run.checks.values()),
         "checks": run.checks,
     }
