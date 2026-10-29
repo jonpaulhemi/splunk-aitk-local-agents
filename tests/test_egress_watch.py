@@ -89,14 +89,27 @@ def test_a_capture_with_only_llm_and_mcp_traffic_passes(tmp_path, linktype):
 
 def test_any_splunk_cloud_name_fails_it(tmp_path):
     frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query("tenant.api.scs.splunk.com"))), 276),
-              _link(_ipv4("44.0.0.1", 6, _tcp(443, _client_hello("quickdraw.splunk.com"))), 276),
+              _link(_ipv4("44.0.0.1", 6, _tcp(443, _client_hello("api.scs.splunk.com"))), 276),
               _link(_ipv6("2600::1", 6, _tcp(443, _client_hello("acme.splunkcloudgc.com"))), 276, ipv6=True),
               _link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query("notsplunk.com.example"))), 276)]
 
     report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames))
 
     assert report["pass"] is False
-    assert report["splunk_cloud"] == ["acme.splunkcloudgc.com", "quickdraw.splunk.com", "tenant.api.scs.splunk.com"]
+    assert report["splunk_cloud"] == ["acme.splunkcloudgc.com", "api.scs.splunk.com", "tenant.api.scs.splunk.com"]
+
+
+def test_platform_telemetry_is_listed_but_doesnt_fail_it(tmp_path):
+    # Splunk's own platform telemetry (splunk_instrumentation) is a server-wide
+    # admin choice, not AI Toolkit's or this app's traffic.
+    frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query("quickdraw.splunk.com"))), 276),
+              _link(_ipv4("52.32.139.171", 6, _tcp(443, _client_hello("quickdraw.splunk.com"))), 276)]
+
+    report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames))
+
+    assert report["pass"] is True
+    assert report["splunk_cloud"] == []
+    assert report["platform_telemetry"] == ["quickdraw.splunk.com"]
 
 
 def test_inbound_and_loopback_traffic_is_left_out(tmp_path):

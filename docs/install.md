@@ -24,7 +24,7 @@ Run this once as an admin after installing. It turns off AI Toolkit's own cloud 
 curl -sk -u admin -X POST "https://localhost:8089/services/aitk_local/offline_setup?output_mode=json"
 ```
 
-Setup doesn't change Splunk's own platform telemetry, which sends usage data to `quickdraw.splunk.com`. That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. If no Splunk cloud traffic should leave the server, turn it off yourself: go to **Settings > Instrumentation**, open the usage data settings, and turn off every option. The no-cloud-traffic check in [`docs/release.md`](release.md) fails while it's on.
+Setup doesn't change Splunk's own platform telemetry, which sends usage data to `quickdraw.splunk.com`. That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation**. The no-cloud-traffic check in [`docs/release.md`](release.md) lists this traffic but doesn't fail on it.
 
 To also set AI Toolkit's MCP domain allowlist, add `-d allowed_domains=...`. The README explains what that list does and doesn't cover.
 
