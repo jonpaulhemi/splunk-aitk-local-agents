@@ -19,9 +19,13 @@ _Avoid_: built-in skill, catalog skill
 ## Knowledge bases
 
 **Knowledge base**:
-An Amazon Bedrock knowledge base attached to an agent, which the agent can search for passages. AI Toolkit calls its connection a "Vector DB" of type AWS_KB.
+An Amazon Bedrock knowledge base attached to an agent, which the agent can search for chunks. AI Toolkit calls its connection a "Vector DB" of type AWS_KB.
 _Avoid_: vector DB, KB connection, RAG source
 
 **Knowledge base search**:
-One query the agent sends to a knowledge base. It returns passages and where they came from, not a written answer.
+One query the agent sends to a knowledge base. It returns the best-matching chunks and where they came from, not a written answer.
 _Avoid_: retrieval, RAG call
+
+**Chunk**:
+A small piece of one document in a knowledge base, a few paragraphs long. A search returns chunks, not whole documents.
+_Avoid_: passage, snippet, result
