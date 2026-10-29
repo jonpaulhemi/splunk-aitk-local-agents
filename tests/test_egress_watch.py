@@ -84,6 +84,7 @@ def test_a_capture_with_only_llm_and_mcp_traffic_passes(tmp_path, linktype):
     assert report["splunk_cloud"] == []
     assert report["names"] == ["bedrock-runtime.us-gov-west-1.amazonaws.com", "mcp.corp.example"]
     assert report["connections"] == ["52.61.0.10:443"]
+    assert report["connections_without_a_name"] == []
 
 
 def test_any_splunk_cloud_name_fails_it(tmp_path):
@@ -125,3 +126,20 @@ def test_hosts_reached_through_an_http_proxy_are_named(tmp_path):
     report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames))
 
     assert report["splunk_cloud"] == ["tenant.api.scs.splunk.com"]
+
+
+def test_connections_whose_name_wasnt_seen_are_listed_for_review(tmp_path):
+    # By IP, or with a ClientHello the capture cut short: it could be anything.
+    frames = [_link(_ipv4("44.0.0.1", 6, _tcp(443, syn=True)), 276)]
+
+    report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames))
+
+    assert report["connections_without_a_name"] == ["44.0.0.1:443"]
+
+
+def test_a_pcapng_file_is_refused_rather_than_misread(tmp_path):
+    path = tmp_path / "run.pcapng"
+    path.write_bytes(b"\x0a\x0d\x0d\x0a" + b"\0" * 40)
+
+    with pytest.raises(ValueError, match="isn't a pcap file"):
+        egress_watch.summarize(path)

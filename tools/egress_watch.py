@@ -13,7 +13,7 @@ connection. It fails if any name belongs to Splunk's cloud (Splunk Cloud
 Services, Cloud Connect, telemetry). The other names should be only your LLM
 and MCP hosts.
 
-Loopback traffic isn't captured, and only each packet's first 512 bytes are
+Loopback traffic isn't captured, and only each packet's first 1600 bytes are
 kept. That is enough for headers and TLS ClientHellos, but anything sent
 unencrypted (an http:// LLM endpoint) would be partly in the capture, so the
 capture file is deleted afterwards unless --keep-pcap is given.
@@ -36,6 +36,11 @@ import time
 # endpoints.
 SPLUNK_CLOUD_DOMAINS = ("splunk.com", "splunkcloud.com", "splunkcloudgc.com", "splkmobile.com", "splunkbeta.com")
 
+ETHERNET, LINUX_SLL, LINUX_SLL2 = 1, 113, 276
+RAW_IP = (101, 12, 228, 229)
+TCP, UDP = 6, 17
+PCAP_MAGIC = {0xA1B2C3D4: "<", 0xA1B23C4D: "<", 0xD4C3B2A1: ">", 0x4D3CB2A1: ">"}
+
 # Everything but loopback. (Flag and payload filters would be smaller, but
 # libpcap can't apply them to IPv6.)
 CAPTURE_FILTER = "(tcp or udp) and not (net 127.0.0.0/8 or host ::1)"
@@ -49,11 +54,11 @@ def is_splunk_cloud(name):
 def summarize(pcap_path, local_addresses=()):
     """The report for one capture: names seen, outbound connections, and whether it passes."""
     local = {ipaddress.ip_address(a) for a in local_addresses}
-    names, connections = set(), set()
+    names, connections, named_ips = set(), set(), set()
     for dst, proto, segment in _ip_packets(pcap_path):
         if dst.is_loopback or dst in local:
             continue
-        if proto == 17 and len(segment) >= 8:
+        if proto == UDP and len(segment) >= 8:
             dport = struct.unpack(">H", segment[2:4])[0]
             if dport == 53:
                 name = _dns_question(segment[8:])
@@ -61,7 +66,7 @@ def summarize(pcap_path, local_addresses=()):
                     names.add(name)
             else:
                 connections.add(_address(dst, dport) + "/udp")
-        elif proto == 6 and len(segment) >= 20:
+        elif proto == TCP and len(segment) >= 20:
             dport = struct.unpack(">H", segment[2:4])[0]
             flags = segment[13]
             payload = segment[(segment[12] >> 4) * 4:]
@@ -70,8 +75,13 @@ def summarize(pcap_path, local_addresses=()):
             name = _server_name(payload) or _proxy_target(payload)
             if name:
                 names.add(name)
+                named_ips.add(_address(dst, dport))
     cloud = sorted(n for n in names if is_splunk_cloud(n))
-    return {"pass": not cloud, "splunk_cloud": cloud, "names": sorted(names), "connections": sorted(connections)}
+    # A connection whose name wasn't seen (no TLS, or a ClientHello the capture
+    # cut short) could be anything, so it's listed for a person to look at.
+    unnamed = sorted(c for c in connections if c not in named_ips and not c.endswith("/udp"))
+    return {"pass": not cloud, "splunk_cloud": cloud, "names": sorted(names), "connections": sorted(connections),
+            "connections_without_a_name": unnamed}
 
 
 def _address(ip, port):
@@ -82,8 +92,9 @@ def _ip_packets(pcap_path):
     """(destination address, protocol, transport segment) for each IP packet."""
     with open(pcap_path, "rb") as f:
         header = f.read(24)
-        magic = struct.unpack("<I", header[:4])[0]
-        endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
+        endian = PCAP_MAGIC.get(struct.unpack("<I", header[:4])[0]) if len(header) == 24 else None
+        if not endian:
+            raise ValueError(f"{pcap_path} isn't a pcap file (pcapng isn't read; use tcpdump -w)")
         linktype = struct.unpack(endian + "I", header[20:24])[0] & 0x0FFFFFFF
         while True:
             record = f.read(16)
@@ -99,16 +110,16 @@ def _ip_packets(pcap_path):
 
 
 def _strip_link(frame, linktype):
-    if linktype == 1:  # Ethernet, with any VLAN tags
+    if linktype == ETHERNET:  # with any VLAN tags
         offset, proto = 14, struct.unpack(">H", frame[12:14])[0]
         while proto in (0x8100, 0x88A8) and len(frame) >= offset + 4:
             proto, offset = struct.unpack(">H", frame[offset + 2:offset + 4])[0], offset + 4
         return frame[offset:] if proto in (0x0800, 0x86DD) else None
-    if linktype == 113:  # LINUX_SLL
+    if linktype == LINUX_SLL:
         return frame[16:] if struct.unpack(">H", frame[14:16])[0] in (0x0800, 0x86DD) else None
-    if linktype == 276:  # LINUX_SLL2
+    if linktype == LINUX_SLL2:
         return frame[20:] if struct.unpack(">H", frame[0:2])[0] in (0x0800, 0x86DD) else None
-    if linktype in (101, 12, 228, 229):  # raw IP
+    if linktype in RAW_IP:
         return frame
     return None
 
@@ -195,8 +206,10 @@ def main():
         pcap = args.read
     else:
         pcap = args.keep_pcap or os.path.join(tempfile.mkdtemp(prefix="egress_watch_"), "run.pcap")
-        tcpdump = subprocess.Popen(["tcpdump", "-i", args.interface, "-s", "512", "-U", "-n", "-w", pcap,
-                                    CAPTURE_FILTER], stderr=subprocess.DEVNULL)
+        # -Z root: many builds otherwise drop to a tcpdump user that can't
+        # write into this root-only folder.
+        tcpdump = subprocess.Popen(["tcpdump", "-i", args.interface, "-s", "1600", "-U", "-n", "-Z", "root",
+                                    "-w", pcap, CAPTURE_FILTER], stderr=subprocess.PIPE, text=True)
         started = time.time()
         print(f"capturing on {args.interface}; run the acceptance now, then press Ctrl-C", file=sys.stderr)
         try:
@@ -206,9 +219,14 @@ def main():
             pass
         if tcpdump.poll() is None:
             tcpdump.send_signal(signal.SIGINT)
-            tcpdump.wait(timeout=30)
+            try:
+                tcpdump.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                tcpdump.kill()
+                tcpdump.wait()
         if tcpdump.returncode not in (0, -signal.SIGINT, 130) or not os.path.exists(pcap):
-            sys.exit(f"tcpdump failed (exit {tcpdump.returncode}); run as root with tcpdump installed")
+            sys.exit(f"tcpdump failed (exit {tcpdump.returncode}): {tcpdump.stderr.read().strip()[-500:]}\n"
+                     "Run as root with tcpdump installed.")
 
     report = {"captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               **summarize(pcap, _local_addresses())}

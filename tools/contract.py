@@ -35,7 +35,7 @@ def toolkit(source):
     if source.is_dir():
         yield source, _version(source)
         return
-    if not tarfile.is_tarfile(source):
+    if not source.is_file() or not tarfile.is_tarfile(source):
         sys.exit(f"{source} is neither a folder nor an app package")
     with tempfile.TemporaryDirectory(prefix="aitk_contract_") as tmp:
         with tarfile.open(source) as tar:

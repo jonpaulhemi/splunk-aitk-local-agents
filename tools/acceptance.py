@@ -62,8 +62,8 @@ class Splunkd:
             "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
         self.context = ssl.create_default_context(cafile=ca_file)
 
-    def call(self, method, path, query=None, form=None, body=None, timeout=120):
-        """(status, parsed JSON or text) for one REST call."""
+    def call(self, method, path, query=None, form=None, body=None, timeout=120, raw=False):
+        """(status, parsed JSON, or the text when `raw` or not JSON) for one REST call."""
         url = self.base + path + ("?" + urllib.parse.urlencode(query) if query else "")
         headers = {"Authorization": self.auth}
         data = None
@@ -76,45 +76,50 @@ class Splunkd:
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, context=self.context, timeout=timeout) as response:
-                return response.status, _parse(response.read())
+                return response.status, _parse(response.read(), raw)
         except urllib.error.HTTPError as e:
-            return e.code, _parse(e.read())
+            return e.code, _parse(e.read(), raw)
 
-    def search(self, spl, earliest="-24h", timeout=900):
-        """The result rows of a search, run with search/jobs/export."""
-        status, text = self._export(spl, earliest, timeout)
+    def search(self, spl, hide=(), earliest="-24h", timeout=900):
+        """The final result rows of a search, run with search/jobs/export.
+
+        Splunk's error text can repeat the search, so the search and `hide`
+        (prompts) are cut out of any error before it reaches the report.
+        """
+        status, text = self.call("POST", "/services/search/jobs/export", form={
+            "search": spl, "output_mode": "json", "earliest_time": earliest, "preview": "false"},
+            timeout=timeout, raw=True)
         if status != 200:
-            raise Failed(f"search returned HTTP {status}: {_short(text)}")
+            raise Failed(f"search returned HTTP {status}: {_scrub(text, spl, *hide)}")
         rows, errors = [], []
         for line in text.splitlines():
             if not line.strip():
                 continue
             item = json.loads(line)
-            if item.get("result"):
+            if item.get("result") and not item.get("preview"):
                 rows.append(item["result"])
             errors += [m.get("text", "") for m in item.get("messages", []) if m.get("type") in ("ERROR", "FATAL")]
         if errors and not rows:
-            raise Failed("search failed: " + "; ".join(_short(e) for e in errors))
+            raise Failed("search failed: " + "; ".join(_scrub(e, spl, *hide) for e in errors))
         return rows
 
-    def _export(self, spl, earliest, timeout):
-        url = self.base + "/services/search/jobs/export"
-        data = urllib.parse.urlencode({"search": spl, "output_mode": "json", "earliest_time": earliest}).encode()
-        request = urllib.request.Request(url, data=data, method="POST", headers={
-            "Authorization": self.auth, "Content-Type": "application/x-www-form-urlencoded"})
-        try:
-            with urllib.request.urlopen(request, context=self.context, timeout=timeout) as response:
-                return response.status, response.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", "replace")
 
-
-def _parse(raw):
+def _parse(raw, as_text=False):
     text = raw.decode("utf-8", "replace")
+    if as_text:
+        return text
     try:
         return json.loads(text)
     except ValueError:
         return text
+
+
+def _scrub(text, *secrets):
+    """`text`, shortened, with each of `secrets` cut out."""
+    text = text if isinstance(text, str) else json.dumps(text)
+    for secret in sorted(filter(None, secrets), key=len, reverse=True):
+        text = text.replace(secret, "[...]").replace(_quote(secret), "[...]")
+    return _short(text)
 
 
 def _short(value, limit=300):
@@ -133,12 +138,12 @@ def aiagent(splunkd, agent, prompt, session_id=None, hitl_input=None):
         spl += f" session_id={_quote(session_id)}"
     if hitl_input is not None:
         spl += f" hitl_input={_quote(json.dumps(hitl_input))}"
-    rows = splunkd.search(spl)
+    rows = splunkd.search(spl, hide=(prompt,))
     if len(rows) != 1:
         raise Failed(f"expected 1 aiagent row, got {len(rows)}")
     row = rows[0]
     if row.get("status") != "success":
-        raise Failed(f"aiagent status {row.get('status')!r}: {_short(row.get('error') or '')}")
+        raise Failed(f"aiagent status {row.get('status')!r}: {_scrub(row.get('error') or '', prompt)}")
     return row
 
 
@@ -149,7 +154,7 @@ def _trace(row):
         return []
 
 
-def _ran(row):
+def _succeeded_calls(row):
     """Tool calls in the row's trace that ran and succeeded."""
     return [t for t in _trace(row) if t.get("tool_call_status") == "success"]
 
@@ -162,19 +167,19 @@ class Run:
         self.created = []
         self.checks = {}
         self.runtime_ids = {}
-        # Code words given in memory checks, looked for in the log afterwards.
-        self.words = []
+        # Given in memory checks, then looked for in aitk_local.log.
+        self.code_words = []
 
     def check(self, name, fn):
         started = time.monotonic()
         try:
-            details = fn() or {}
-            self.checks[name] = {"pass": True, "seconds": round(time.monotonic() - started, 1), **details}
+            outcome = {"pass": True, **(fn() or {})}
         except Failed as e:
-            self.checks[name] = {"pass": False, "seconds": round(time.monotonic() - started, 1), "error": str(e)}
+            outcome = {"pass": False, "error": str(e)}
         except Exception as e:  # noqa: BLE001 (a broken check must not stop cleanup)
-            self.checks[name] = {"pass": False, "seconds": round(time.monotonic() - started, 1),
-                                 "error": f"{type(e).__name__}: {_short(str(e))}"}
+            # Only the type: the text of an unexpected error could hold anything.
+            outcome = {"pass": False, "error": type(e).__name__}
+        self.checks[name] = {**outcome, "seconds": round(time.monotonic() - started, 1)}
         result = "PASS" if self.checks[name]["pass"] else "FAIL"
         print(f"{result} {name}" + ("" if self.checks[name]["pass"] else f": {self.checks[name]['error']}"),
               file=sys.stderr)
@@ -198,11 +203,20 @@ class Run:
         return {"version": content.get("version")}
 
     def setup(self):
-        status, body = self.splunkd.call("POST", "/services/aitk_local/offline_setup", {"output_mode": "json"},
-                                         form={})
-        if status != 200:
-            raise Failed(f"offline_setup returned HTTP {status}: {_short(body)}")
-        return {"result": body if isinstance(body, dict) else _short(body)}
+        """Run setup, then again: the second run must find AI Toolkit's two
+        sync inputs and five telemetry searches all already off."""
+        replies = []
+        for _ in range(2):
+            status, body = self.splunkd.call("POST", "/services/aitk_local/offline_setup", {"output_mode": "json"},
+                                             form={})
+            if status != 200 or not isinstance(body, dict):
+                raise Failed(f"offline_setup returned HTTP {status}: {_short(body)}")
+            replies.append(body)
+        first, second = replies
+        if second.get("changed") or second.get("missing") or len(second.get("unchanged") or []) < 7:
+            raise Failed(f"a second setup run didn't find everything off: {_short(second)}")
+        return {"changed": [c.get("setting") for c in first.get("changed") or []],
+                "already_off": second.get("unchanged")}
 
     def diagnostics(self):
         status, body = self.splunkd.call("GET", "/services/aitk_local/diagnostics", {"output_mode": "json"})
@@ -274,7 +288,7 @@ class Run:
 
     def uses_mcp(self, agent):
         row = aiagent(self.splunkd, agent, self.args.mcp_question)
-        ran = _ran(row)
+        ran = _succeeded_calls(row)
         if not ran:
             raise Failed(f"no MCP tool call succeeded (trace has {len(_trace(row))} entries)")
         if not (row.get("result_1") or "").strip():
@@ -283,12 +297,12 @@ class Run:
 
     def remembers(self, agent):
         word = "kestrel" + secrets.token_hex(3)
+        self.code_words.append(word)
         session = f"{self.prefix}_{secrets.token_hex(4)}"
         aiagent(self.splunkd, agent, f"Remember this code word for later: {word}. Reply OK.", session)
         row = aiagent(self.splunkd, agent, "What code word did I give you? Reply with just the word.", session)
         if word not in (row.get("result_1") or "").lower():
             raise Failed("the second turn didn't recall the code word")
-        self.words.append(word)
         return {}
 
     def structured(self, agent):
@@ -308,14 +322,15 @@ class Run:
         if paused.get("hitl_status") != "waiting_for_approval":
             raise Failed(f"the run didn't pause (hitl_status={paused.get('hitl_status')!r})")
         pending = json.loads(paused.get("hitl_pending") or "[]")
-        if not pending or _ran(paused):
-            raise Failed(f"expected pending calls and none run; pending={len(pending)} ran={len(_ran(paused))}")
+        if not pending or _succeeded_calls(paused):
+            raise Failed(f"expected pending calls and none run; pending={len(pending)} "
+                         f"ran={len(_succeeded_calls(paused))}")
         ids = [p["tool_call_id"] for p in pending]
         decisions = {"decisions": [{"tool_call_id": i, "approved": True} for i in ids]}
         # The model may ask for another gated call afterwards; that's allowed,
         # but each approved call must have run exactly once.
         resumed = aiagent(self.splunkd, agent, RESUME_PROMPT, session, hitl_input=decisions)
-        ran = [t.get("tool_call_id") for t in _ran(resumed)]
+        ran = [t.get("tool_call_id") for t in _succeeded_calls(resumed)]
         if sorted(i for i in ran if i in ids) != sorted(ids):
             raise Failed(f"approved calls ran {sum(i in ids for i in ran)} times, expected {len(ids)}")
         return {"pending": len(ids), "tools": sorted({p.get("name") for p in pending})}
@@ -341,9 +356,20 @@ class Run:
         return {"regions": regions}
 
     def log_privacy(self):
-        if not self.words:
+        if not self.code_words:
             raise Failed("no memory check ran, so there's nothing to look for")
-        terms = " OR ".join(f"\"{w}\"" for w in self.words)
+        # Wait until this run's invokes are indexed, so an empty result means something.
+        runtime_ids = " OR ".join(f"runtime_id={r}" for r in self.runtime_ids.values() if r)
+        deadline = time.monotonic() + 90
+        while True:
+            rows = self.splunkd.search(f"search index=_internal source=*aitk_local.log \"invoke completed\" "
+                                       f"({runtime_ids}) | stats count")
+            if rows and int(rows[0].get("count", 0)):
+                break
+            if time.monotonic() > deadline:
+                raise Failed("this run's invokes never showed up in index=_internal")
+            time.sleep(10)
+        terms = " OR ".join(f"\"{w}\"" for w in self.code_words)
         rows = self.splunkd.search(f"search index=_internal source=*aitk_local.log ({terms}) | stats count")
         count = int(rows[0].get("count", 0)) if rows else 0
         if count:

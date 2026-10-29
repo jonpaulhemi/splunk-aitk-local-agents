@@ -2,7 +2,7 @@
 
 ## 0.11.0
 
-This is the first release that's checked end to end on a real search head. The proof is in `docs/releases/0.11.0/`.
+This is the first release checked end to end on a real search head. The acceptance and no-cloud-traffic reports go in `docs/releases/0.11.0/` once that run passes.
 
 - Runs AI Toolkit 6.2.0 Agent Launchpad agents and `| aiagent` on the search head, with no Cloud Connect and no Splunk cloud traffic.
 - **Connections:** Custom (OpenAI-compatible) LLM connections, and Bedrock, including GovCloud regions and assumed roles.
