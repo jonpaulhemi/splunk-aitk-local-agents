@@ -19,7 +19,7 @@ This is the first release checked end to end on a real search head. The acceptan
 - **Logging:** the run log now records a Bedrock run's region.
 
 **Known issues**
-- **AI Toolkit 6.2.0 Launchpad error:** Launchpad intermittently fails a message with "Conversation search id was not returned", and splunkd logs `unexpected data received (73)`. This is AI Toolkit's own handler, and it happens with this app disabled too. Sending again works, and `| aiagent` is unaffected. See `docs/install.md`.
+- **AI Toolkit 6.2.0 Launchpad error:** Launchpad intermittently fails a message with "Conversation search id was not returned", and splunkd logs `unexpected data received (73)`. This is AI Toolkit's own handler, and it happens with this app disabled too. Replies to agent create and delete calls can be corrupted the same way, though the change goes through. Sending again works, and `| aiagent` is unaffected. See `docs/install.md`.
 - **Approval emails:** AI Toolkit's approval emails haven't been tried live.
 - **Search head clusters:** only a standalone search head is supported.
 - **Platform:** the bundled libraries are built for Linux x86_64 only.

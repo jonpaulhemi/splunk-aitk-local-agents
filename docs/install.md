@@ -67,4 +67,6 @@ This app implements the agent runtime API that AI Toolkit 6.2.0 calls, as descri
 
 Launchpad sometimes fails a chat message with "Conversation search id was not returned", or the agent list fails to load. When this happens, splunkd logs `unexpected data received (73)` for AI Toolkit's own `/mltk/agent_converse` handler. Stray output from that handler's process corrupts the reply.
 
+The same corruption can hit replies to creating or deleting an agent through AI Toolkit's agents API, seen in the 0.11.0 acceptance run. The change still goes through, so check the agent list before trying again.
+
 This happens at the same rate with this app disabled, about 2 to 3 messages in 10. Sending the message again works. When it hits an approval decision, the decision isn't lost: no run is submitted twice. `| aiagent` isn't affected.

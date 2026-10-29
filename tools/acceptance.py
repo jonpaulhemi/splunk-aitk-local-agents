@@ -259,37 +259,55 @@ class Run:
         }
         if with_tools and not settings["mcps"]:
             raise Failed(f"template agent {template!r} has no MCP connection")
-        status, body = self.splunkd.call("POST", self._agents(), body=settings, timeout=660)
-        if status != 200:
-            raise Failed(f"creating {name} returned HTTP {status}: {_short(body)}")
+        # Tracked before the POST, so cleanup finds it whatever the reply.
         self.created.append(name)
+        status, body = self.splunkd.call("POST", self._agents(), body=settings, timeout=660)
+        details = {"agent": name}
+        if status != 200:
+            # AI Toolkit 6.2.0's REST replies are sometimes corrupted
+            # ("unexpected data received (73)") after the agent was saved, so
+            # look before deciding, and never send the create again.
+            if self.splunkd.call("GET", self._agents(), {"name": name})[0] != 200:
+                raise Failed(f"creating {name} returned HTTP {status} and it wasn't saved: {_short(body)}")
+            details["reply_recovered"] = f"HTTP {status}"
         deadline = time.monotonic() + self.args.ready_timeout
         while time.monotonic() < deadline:
             status, body = self.splunkd.call("GET", self._agents(), {"name": name})
             version = body["versions"][0] if status == 200 else {}
             if version.get("state") == "Available":
                 self.runtime_ids[kind] = (version.get("runtime_params") or {}).get("runtime_id")
-                return name
+                return details
             if version.get("state") == "Failed":
                 raise Failed(f"{name} failed to become available")
             time.sleep(3)
         raise Failed(f"{name} wasn't available after {self.args.ready_timeout}s")
 
     def delete_all(self):
-        left = []
+        left, recovered = [], 0
         for name in self.created:
-            status, _ = self.splunkd.call("DELETE", f"{self._agents()}/{urllib.parse.quote(name)}", timeout=660)
-            deadline = time.monotonic() + 120
-            while status in (200, 202) and time.monotonic() < deadline:
-                status, _ = self.splunkd.call("GET", self._agents(), {"name": name})
-                if status == 404:
-                    break
-                time.sleep(3)
-            if status != 404:
+            path = f"{self._agents()}/{urllib.parse.quote(name)}"
+            status, _ = self.splunkd.call("DELETE", path, timeout=660)
+            # Whatever the reply said (it can be corrupted after the delete
+            # went through), the agent is gone only when a GET says so. The
+            # delete is sent again only if a failed reply left it in place.
+            gone = self._gone(name)
+            if not gone and status not in (200, 202):
+                self.splunkd.call("DELETE", path, timeout=660)
+                gone = self._gone(name)
+            recovered += gone and status not in (200, 202)
+            if not gone:
                 left.append(name)
         if left:
             raise Failed(f"not deleted: {left}")
-        return {"deleted": len(self.created)}
+        return {"deleted": len(self.created), **({"replies_recovered": recovered} if recovered else {})}
+
+    def _gone(self, name, seconds=120):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if self.splunkd.call("GET", self._agents(), {"name": name})[0] == 404:
+                return True
+            time.sleep(3)
+        return False
 
     # Checks on one agent
 
@@ -422,8 +440,9 @@ def main():
                 ("approval", args.approval_agent, {}),
                 ("structured", args.openai_agent, {"with_tools": False, "structured_output": STRUCTURED_OUTPUT})):
             def create(kind=kind, template=template, extra=extra):
-                agents[kind] = run.create(kind, template, **extra)
-                return {"agent": agents[kind]}
+                details = run.create(kind, template, **extra)
+                agents[kind] = details["agent"]
+                return details
             run.check(f"create_{kind}", create)
         for kind in ("openai", "bedrock"):
             if kind in agents:
