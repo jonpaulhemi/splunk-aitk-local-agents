@@ -1,9 +1,12 @@
-"""A scripted AWS edge for tests: Bedrock Runtime's Converse API plus STS AssumeRole.
+"""A scripted AWS edge for tests: Bedrock Runtime's Converse API, Bedrock Agent
+Runtime's Retrieve (knowledge base search), plus STS AssumeRole.
 
-Point botocore at it with AWS_ENDPOINT_URL_BEDROCK_RUNTIME and
-AWS_ENDPOINT_URL_STS. Converse requests are answered by `script(request_json)`,
-which returns the assistant's text, a `tool_use(name, input)` reply, or an
-(status, error_type, message) triple.
+Point botocore at it with AWS_ENDPOINT_URL_BEDROCK_RUNTIME,
+AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME and AWS_ENDPOINT_URL_STS. Converse
+requests are answered by `script(request_json)`, which returns the assistant's
+text, a `tool_use(name, input)` reply, or an (status, error_type, message)
+triple. Retrieve requests are answered by `retrieve_script(kb_id, request_json)`,
+which returns a list of `chunk(...)` results or such a triple.
 Signatures aren't checked, but each request's SigV4 credential scope is
 recorded so tests can see which key, region and session token were used.
 """
@@ -26,6 +29,8 @@ class FakeBedrock:
         self.script = lambda request: "ok"
         self.converse_calls = []  # {"model", "key_id", "region", "session_token", "body"}
         self.assume_role_calls = []  # {"key_id", "region", "form"}
+        self.retrieve_script = lambda kb_id, request: []
+        self.retrieve_calls = []  # {"kb_id", "key_id", "region", "session_token", "body"}
         self.reject_key_ids = set()  # answered like an invalid security token
         self.delay = 0.0  # seconds before each Converse answer
         self._lock = threading.Lock()
@@ -58,6 +63,9 @@ class FakeBedrock:
                     with fake._lock:
                         fake.assume_role_calls.append({"key_id": key_id, "region": region, "form": form})
                     return self._send(200, "text/xml", _assume_role_xml())
+                retrieve = re.fullmatch(r"/knowledgebases/([^/]+)/retrieve", self.path)
+                if retrieve:
+                    return self._retrieve(urllib.parse.unquote(retrieve.group(1)), key_id, region, json.loads(raw))
                 match = re.fullmatch(r"/model/([^/]+)/converse", self.path)
                 if not match:
                     return self._error(404, "UnknownOperationException", "unknown operation")
@@ -75,6 +83,20 @@ class FakeBedrock:
                     return self._send(200, "application/json", json.dumps(_converse(answer)))
                 except BrokenPipeError:
                     pass  # the client gave up waiting (timeout tests)
+
+            def _retrieve(self, kb_id, key_id, region, body):
+                with fake._lock:
+                    fake.retrieve_calls.append({"kb_id": kb_id, "key_id": key_id, "region": region,
+                                                "session_token": self.headers.get("X-Amz-Security-Token"),
+                                                "body": body})
+                time.sleep(fake.delay)
+                answer = fake.retrieve_script(kb_id, body)
+                if isinstance(answer, tuple):
+                    return self._error(*answer)
+                try:
+                    return self._send(200, "application/json", json.dumps({"retrievalResults": answer}))
+                except BrokenPipeError:
+                    pass
 
             def _error(self, status, error_type, message):
                 self.send_response(status)
@@ -114,6 +136,13 @@ def _scope(authorization):
 def tool_use(name, tool_input, tool_use_id="tooluse_1"):
     """A Converse reply asking to call one tool."""
     return {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}
+
+
+def chunk(text, uri, score):
+    """One Retrieve result: a chunk from an S3 document (or, for an http(s) `uri`, a web page)."""
+    location = ({"type": "WEB", "webLocation": {"url": uri}} if uri.startswith("http")
+                else {"type": "S3", "s3Location": {"uri": uri}})
+    return {"content": {"type": "TEXT", "text": text}, "location": location, "score": score}
 
 
 def offered_tools(request):

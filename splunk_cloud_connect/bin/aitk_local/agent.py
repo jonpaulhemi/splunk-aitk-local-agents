@@ -4,13 +4,10 @@ import asyncio
 import time
 import traceback
 
-from aitk_local import approvals, llm, log, mcp_tools, memory, skills, structured
+from aitk_local import approvals, knowledge_bases, llm, log, mcp_tools, memory, skills, structured
 
 from aitk_local.isolated import TIMEOUT_SECONDS
 
-# Blocks AI Toolkit sends that later tickets will use; for now only their key
-# names are logged, and only when they hold something.
-NOT_YET_USED = ("knowledge_bases",)
 DEFAULT_TIMEOUT = 300
 # Leave the worker room to report the timeout before isolated.run kills it.
 MAX_TIMEOUT = TIMEOUT_SECONDS - 60
@@ -22,9 +19,6 @@ def run(payload):
     started = time.monotonic()
     block = payload.get("llm") or {}
     ids = f"runtime_id={payload.get('runtime_id')} session_id={payload.get('session_id')}"
-    ignored = sorted(k for k in NOT_YET_USED if _has_content(payload.get(k)))
-    if ignored:
-        logger.info("invoke %s: not yet supported, ignoring %s", ids, ignored)
     timeout = DEFAULT_TIMEOUT
     # Kept on failure too, so run history shows what the agent did before it stopped.
     trace = mcp_tools.Trace()
@@ -58,13 +52,6 @@ def run(payload):
 def _timeout(value):
     seconds = int(value) if value else DEFAULT_TIMEOUT
     return max(1, min(seconds, MAX_TIMEOUT))
-
-
-def _has_content(value):
-    # knowledge_bases arrives as {"vector_dbs": []} even when the agent has none.
-    if isinstance(value, dict):
-        return any(_has_content(v) for v in value.values())
-    return bool(value)
 
 
 def _where(e):
@@ -142,7 +129,7 @@ async def _answer(block, payload, trace, attached):
         # The model calls tools by name alone.
         raise mcp_tools.Unusable(f"Tool '{skills.TOOL}' is selected from MCP server '{trace.servers[skills.TOOL]}', "
                                  "but this agent's skills need that name; deselect it")
-    tools += skill_tools
+    tools += skill_tools + knowledge_bases.tools(payload.get("knowledge_bases"))
     trace.kinds[skills.TOOL] = skills.TRACE_TYPE
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)

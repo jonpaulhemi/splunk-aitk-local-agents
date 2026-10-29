@@ -11,8 +11,8 @@ It captures with tcpdump on every interface, then reports each DNS name
 looked up, each TLS server name or proxy CONNECT host, and each new outbound
 connection. It fails if any name belongs to Splunk's cloud (Splunk Cloud
 Services, Cloud Connect, AI Toolkit telemetry). Splunk's platform telemetry is listed
-under platform_telemetry but doesn't fail it. The other names should be only your LLM
-and MCP hosts.
+under platform_telemetry but doesn't fail it. The other names should be only your LLM,
+knowledge base (bedrock-agent-runtime.<region>.amazonaws.com) and MCP hosts.
 
 Loopback traffic isn't captured, and only each packet's first 1600 bytes are
 kept. That is enough for headers and TLS ClientHellos, but anything sent

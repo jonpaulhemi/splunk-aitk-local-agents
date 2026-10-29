@@ -45,3 +45,21 @@ def session_retention_hours():
     except ValueError:
         return DEFAULT_SESSION_RETENTION_HOURS
     return hours if hours > 0 else DEFAULT_SESSION_RETENTION_HOURS
+
+
+DEFAULT_CHUNKS_PER_SEARCH = 5
+
+
+def chunks_per_search():
+    """How many chunks a knowledge base search asks for ([knowledge_base] chunks_per_search)."""
+    value = _conf().get("knowledge_base", "chunks_per_search", fallback="").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_CHUNKS_PER_SEARCH
+
+
+DEFAULT_SEARCH_TIMEOUT_SECONDS = 30
+
+
+def search_timeout_seconds():
+    """How long one knowledge base search may take ([knowledge_base] search_timeout_seconds)."""
+    value = _conf().get("knowledge_base", "search_timeout_seconds", fallback="").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_SEARCH_TIMEOUT_SECONDS
