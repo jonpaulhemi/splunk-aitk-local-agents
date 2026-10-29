@@ -183,3 +183,15 @@ def test_a_run_paused_for_approval_and_its_resumption_each_report_their_own_load
     assert resumed["status"] == "success", resumed["error"]
     assert mcp.calls == [("delete_index", {"name": "old"})]
     assert _skills(resumed) == [{"name": "capacity_forecast"}]
+
+
+def test_an_mcp_tool_named_load_skill_on_an_agent_with_skills_fails_clearly(aitk, splunkd, admin, agent, llm, mcp):
+    clash = {"name": "splunk", "type": "SPLUNK", "tools": ["load_skill"], "approval_required_tools": [],
+             "require_approval": False, "connection_details": {"url": mcp.url, "auth_token": "splunk-mcp-token"}}
+
+    row = _run(aitk, splunkd, admin, agent, llm, [TRIAGE], mcps=[clash])
+
+    assert row["status"] == "error"
+    assert row["error"] == ("Tool 'load_skill' is selected from MCP server 'splunk', "
+                            "but this agent's skills need that name; deselect it")
+    assert llm.requests == []

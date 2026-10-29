@@ -28,20 +28,20 @@ def run(payload):
     timeout = DEFAULT_TIMEOUT
     # Kept on failure too, so run history shows what the agent did before it stopped.
     trace = mcp_tools.Trace()
-    attached = skills.Skills(payload.get("skills"))
+    attached = skills.Skills(payload.get("skills"))  # and, as the run goes, which were loaded
     try:
         timeout = _timeout(payload.get("agent_timeout"))
         response, pending = _within(timeout, _answer(block, payload, trace, attached))
         outcome = _completed(True, response, tool_invocations=trace.calls, hitl_pending=pending,
-                             skills=attached.reported())
+                             loaded_skills=attached.reported())
     except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, approvals.NothingWaiting) as e:
-        outcome = _completed(False, error=str(e), tool_invocations=trace.calls, skills=attached.reported())
+        outcome = _completed(False, error=str(e), tool_invocations=trace.calls, loaded_skills=attached.reported())
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls,
-                             skills=attached.reported())
+                             loaded_skills=attached.reported())
     except Exception as e:
         outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls,
-                             skills=attached.reported())
+                             loaded_skills=attached.reported())
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
         "invoke completed %s model=%s provider=%s%s success=%s tool_calls=%d duration=%.1fs%s%s",
@@ -131,14 +131,19 @@ def _within(seconds, coroutine):
 async def _answer(block, payload, trace, attached):
     """(answer, pending approvals): the answer is text, or a dict for structured
     output; while tool calls wait for approval it's the model's text so far.
-    Tool calls are recorded in `trace`, and skills loaded in `attached`."""
+    Tool calls are recorded in `trace`, and skill loads in `attached`."""
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
     from langgraph.types import Command
 
     tools, trace.servers, gated = await mcp_tools.load(payload.get("mcps") or [])
-    tools += attached.tools()
-    trace.kinds[skills.TOOL] = skills.KIND
+    skill_tools = attached.tools()
+    if skill_tools and skills.TOOL in trace.servers:
+        # The model calls tools by name alone.
+        raise mcp_tools.Unusable(f"Tool '{skills.TOOL}' is selected from MCP server '{trace.servers[skills.TOOL]}', "
+                                 "but this agent's skills need that name; deselect it")
+    tools += skill_tools
+    trace.kinds[skills.TOOL] = skills.TRACE_TYPE
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)
     system_prompt = "\n\n".join(filter(None, [payload.get("system_prompt"), attached.prompt()])) or None
@@ -193,7 +198,7 @@ def failed(error):
     return _completed(False, error=error)
 
 
-def _completed(success, response=None, error=None, tool_invocations=(), hitl_pending=(), skills=()):
+def _completed(success, response=None, error=None, tool_invocations=(), hitl_pending=(), loaded_skills=()):
     chunk = {
         "status": "completed",
         "success": success,
@@ -201,7 +206,7 @@ def _completed(success, response=None, error=None, tool_invocations=(), hitl_pen
         "tool_invocations": list(tool_invocations),
         "hitl_status": approvals.WAITING if hitl_pending else None,
         "hitl_pending": list(hitl_pending),
-        "skills": list(skills),
+        "skills": list(loaded_skills),
     }
     if not success:
         chunk["error_message"] = error

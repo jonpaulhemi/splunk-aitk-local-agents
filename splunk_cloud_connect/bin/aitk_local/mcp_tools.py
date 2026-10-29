@@ -158,7 +158,7 @@ class Trace:
 
     def __init__(self, servers=None):
         self.servers = servers or {}  # tool name -> MCP server name, set once tools are loaded
-        self.kinds = {}  # tool name -> trace `type`, for tools that aren't plain tool calls (skills)
+        self.kinds = {}  # tool name -> trace `type`, for tools that aren't MCP tool calls
         self.calls = []
         self._open = {}  # LangChain run id -> call
         self.recorder = _recorder(self)

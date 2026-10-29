@@ -1,6 +1,6 @@
 # Setting up a small Bedrock knowledge base
 
-This guide gets you a knowledge base you can attach to an agent and use for the live checks in #40 and #41. It assumes a commercial AWS account and the AWS console, and should take about 20 minutes. Everything happens in one region. Pick one where Bedrock knowledge bases are available, such as `us-east-1` or `us-west-2`, and use it throughout.
+This guide gets you a knowledge base you can attach to an agent, for trying out knowledge base search (0.12.0 and later). It assumes a commercial AWS account and the AWS console, and should take about 20 minutes. Everything happens in one region. Pick one where Bedrock knowledge bases are available, such as `us-east-1` or `us-west-2`, and use it throughout.
 
 ## 1. Put a few documents in S3
 
@@ -20,7 +20,7 @@ This guide gets you a knowledge base you can attach to an agent and use for the 
 
 ## 3. Create the credentials the search head uses
 
-AI Toolkit's knowledge base connection takes an access key pair and a role ARN, and both are required. Our runtime signs searches with the role: it uses the key pair to assume the role, then searches as that role. AI Toolkit's own **Test connection** button calls Bedrock with the key pair directly and ignores the role. So give the user permission to search too, or the button fails even though agent runs work.
+AI Toolkit's knowledge base connection takes an access key pair and a role ARN, and both are required. Our runtime signs searches with the role: it uses the key pair to assume the role, then searches as that role. AI Toolkit's own **Test connection** button calls Bedrock with the key pair directly and ignores the role. If you want that button to pass, also give the user permission to search; agent runs don't need it.
 
 1. **IAM role** `aitk-kb-search` with this permission policy, using your region, account ID and knowledge base ID:
 
@@ -48,7 +48,7 @@ AI Toolkit's knowledge base connection takes an access key pair and a role ARN, 
    }
    ```
 
-2. **IAM user** `aitk-kb-search` with no console access, and an inline policy that lets it assume the role and search (the search permission is only for AI Toolkit's Test connection):
+2. **IAM user** `aitk-kb-search` with no console access, and an inline policy that lets it assume the role. The second statement is optional: it only makes AI Toolkit's Test connection pass.
 
    ```json
    {
@@ -71,10 +71,10 @@ Create the user first if the console rejects the role's trust policy because the
 1. In AI Toolkit, open the agent connections page and add a connection with **Connection Type: Knowledge base** and **Knowledge base type: AWS KB**.
 2. Fill in the region, the knowledge base ID, the access key and secret key from step 3, and the role ARN `arn:aws:iam::<account-id>:role/aitk-kb-search`.
 3. **Knowledge base id description** is what the agent reads when deciding whether to search. It's the only thing the model learns about the knowledge base, so say what's in it and when to use it. For example: "Our on-call runbooks and escalation rota. Search it for how to handle an alert or who to page."
-4. Click **Test connection**, then save.
+4. Click **Test connection** (it fails without the optional search permission on the user; that's fine), then save.
 5. Edit an agent, attach the knowledge base, and save the agent.
 
-Ask the agent something only your documents answer. The run trace shows a `search_knowledge_base_<id>` call, and the answer cites the S3 file it came from.
+With knowledge base search in place (0.12.0 and later), ask the agent something only your documents answer. The run trace shows a `search_knowledge_base_<id>` call, and the answer can cite the S3 file it came from.
 
 ## Cost and teardown
 

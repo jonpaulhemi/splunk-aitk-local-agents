@@ -7,7 +7,7 @@ skills stay out of the context until they're needed.
 """
 
 TOOL = "load_skill"
-KIND = "skill"
+TRACE_TYPE = "skill"  # the trace `type` AI Toolkit's UI shows as a skill
 
 
 class Skills:
