@@ -18,6 +18,8 @@ Use Splunk Web's **Install app from file**, then restart splunkd. Follow [`insta
 
 ## 3. Watch outbound traffic
 
+Before you start, turn off Splunk's platform telemetry under **Settings > Instrumentation** (see `docs/install.md`). It reports to `quickdraw.splunk.com` and fails this check.
+
 On the search head, as root, start the capture. It needs `tcpdump`:
 
 ```
