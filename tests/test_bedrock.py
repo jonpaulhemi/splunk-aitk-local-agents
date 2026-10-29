@@ -65,6 +65,15 @@ def test_aiagent_answers_from_govcloud_bedrock_with_the_connections_keys(aitk, s
     assert bedrock.assume_role_calls == []
 
 
+def test_the_region_is_logged_so_a_govcloud_run_can_be_shown(aitk, splunkd, admin, bedrock, splunk_home):
+    agent = create_agent(aitk, splunkd, admin)
+
+    run_aiagent(aitk, splunkd, admin, agent, _bedrock_block(), "hi", [{"x": 1}])
+
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert "provider=Bedrock region=us-gov-west-1 success=True" in log
+
+
 def test_a_role_arn_is_assumed_first_like_ai_toolkit_does(aitk, splunkd, admin, bedrock):
     agent = create_agent(aitk, splunkd, admin)
 

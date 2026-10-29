@@ -40,8 +40,10 @@ def run(payload):
         outcome = _completed(False, error=_llm_error(e, len(trace.calls)), tool_invocations=trace.calls)
         logger.info("invoke %s failed at:\n%s", ids, _where(e))
     logger.info(
-        "invoke completed %s model=%s provider=%s success=%s tool_calls=%d duration=%.1fs%s%s",
-        ids, block.get("model"), block.get("provider"), outcome["success"], len(outcome["tool_invocations"]),
+        "invoke completed %s model=%s provider=%s%s success=%s tool_calls=%d duration=%.1fs%s%s",
+        ids, block.get("model"), block.get("provider"),
+        f" region={block['aws_region']}" if block.get("aws_region") else "",
+        outcome["success"], len(outcome["tool_invocations"]),
         time.monotonic() - started,
         f" {approvals.WAITING} pending={len(outcome['hitl_pending'])}" if outcome["hitl_pending"] else "",
         f" error={outcome['error_message']}" if not outcome["success"] else "",
