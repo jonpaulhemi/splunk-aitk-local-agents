@@ -29,9 +29,7 @@ DEFAULT_MAX_TOOL_RESULT_CHARS = 16000
 
 def max_tool_result_chars():
     """How much of each tool result the model sees ([agent] max_tool_result_chars)."""
-    conf = _conf()
-    value = conf.get("agent", "max_tool_result_chars", fallback="").strip()
-    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_MAX_TOOL_RESULT_CHARS
+    return _positive_int("agent", "max_tool_result_chars", DEFAULT_MAX_TOOL_RESULT_CHARS)
 
 
 DEFAULT_SESSION_RETENTION_HOURS = 168.0
@@ -52,8 +50,7 @@ DEFAULT_CHUNKS_PER_SEARCH = 5
 
 def chunks_per_search():
     """How many chunks a knowledge base search asks for ([knowledge_base] chunks_per_search)."""
-    value = _conf().get("knowledge_base", "chunks_per_search", fallback="").strip()
-    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_CHUNKS_PER_SEARCH
+    return _positive_int("knowledge_base", "chunks_per_search", DEFAULT_CHUNKS_PER_SEARCH)
 
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 30
@@ -61,5 +58,9 @@ DEFAULT_SEARCH_TIMEOUT_SECONDS = 30
 
 def search_timeout_seconds():
     """How long one knowledge base search may take ([knowledge_base] search_timeout_seconds)."""
-    value = _conf().get("knowledge_base", "search_timeout_seconds", fallback="").strip()
-    return int(value) if value.isdigit() and int(value) > 0 else DEFAULT_SEARCH_TIMEOUT_SECONDS
+    return _positive_int("knowledge_base", "search_timeout_seconds", DEFAULT_SEARCH_TIMEOUT_SECONDS)
+
+
+def _positive_int(section, key, default):
+    value = _conf().get(section, key, fallback="").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else default

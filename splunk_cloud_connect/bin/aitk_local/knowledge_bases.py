@@ -24,48 +24,59 @@ MAX_RESULT_CHARS = 8000
 def tools(knowledge_bases):
     """One search tool per AWS_KB knowledge base in the payload's `knowledge_bases` block."""
     entries = (knowledge_bases or {}).get("vector_dbs") or []
-    found = {}
+    by_id = {}
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("type") != TYPE:
-            log.get_logger().info("knowledge base of type %s isn't supported, ignoring it",
-                                  entry.get("type") if isinstance(entry, dict) else type(entry).__name__)
+        kind = entry.get("type") if isinstance(entry, dict) else type(entry).__name__
+        if kind != TYPE or not entry.get("kb_id"):
+            log.get_logger().info("knowledge base of type %s%s isn't supported, ignoring it", kind,
+                                  "" if kind != TYPE else " without a kb_id")
             continue
-        name = TOOL_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "_", str(entry.get("kb_id") or ""))
-        found.setdefault(name[:64], entry)
-    return [_tool(name, entry) for name, entry in found.items()]
+        by_id.setdefault(str(entry["kb_id"]), entry)
+    return [_tool(kb_id, entry) for kb_id, entry in by_id.items()]
 
 
-def _tool(name, entry):
+def _tool(kb_id, entry):
     from langchain_core.tools import StructuredTool, ToolException
 
     chunks, timeout = config.chunks_per_search(), config.search_timeout_seconds()
-    details = entry.get("connection_details") or {}
+    client = _client(entry.get("connection_details") or {}, timeout)
 
     async def search(query: str) -> str:
+        if client is None:
+            raise ToolException("The knowledge base connection needs a region, an access key ID and a secret key")
         try:
-            found = await asyncio.wait_for(asyncio.to_thread(_retrieve, entry["kb_id"], details, query, chunks,
-                                                             timeout), timeout=timeout)
-        except TimeoutError:
-            raise ToolException(f"The knowledge base search timed out after {timeout}s") from None
+            results = await asyncio.wait_for(asyncio.to_thread(_search, client, kb_id, query, chunks),
+                                             timeout=timeout)
         except Exception as e:
+            if isinstance(e, TimeoutError) or type(e).__name__ in ("ReadTimeoutError", "ConnectTimeoutError"):
+                raise ToolException(f"The knowledge base search timed out after {timeout}s") from None
             raise ToolException(f"The knowledge base search failed: {_reason(e)}") from None
-        return _formatted(found)
+        return _formatted(results)
 
-    return StructuredTool.from_function(
-        coroutine=search, name=name, handle_tool_error=True,
-        description=entry.get("description") or f"Search knowledge base {entry.get('kb_id')}.")
+    name = (TOOL_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "_", kb_id))[:64]
+    return StructuredTool.from_function(coroutine=search, name=name, handle_tool_error=True,
+                                        description=entry.get("description") or f"Search knowledge base {kb_id}.")
 
 
-def _retrieve(kb_id, details, query, chunks, timeout):
+def _client(details, timeout):
+    """A Bedrock Agent Runtime client for one knowledge base's connection, made
+    once per run; None if the connection lacks credentials, which are never
+    taken from the environment instead."""
+    region, key_id, secret = details.get("region"), details.get("aws_access_key_id"), details.get(
+        "aws_access_key_token")
+    if not (region and key_id and secret):
+        return None
     import boto3
     from botocore.config import Config
 
-    # Bounded by the tool's own timeout; one retry for throttling.
-    client = boto3.client("bedrock-agent-runtime", region_name=details.get("region"),
-                          aws_access_key_id=details.get("aws_access_key_id"),
-                          aws_secret_access_key=details.get("aws_access_key_token"),
-                          config=Config(connect_timeout=timeout, read_timeout=timeout,
-                                        retries={"total_max_attempts": 2}))
+    # Each search is bounded by the tool's own timeout; one retry for throttling.
+    return boto3.client("bedrock-agent-runtime", region_name=region, aws_access_key_id=key_id,
+                        aws_secret_access_key=secret, aws_session_token=None,
+                        config=Config(connect_timeout=timeout, read_timeout=timeout,
+                                      retries={"total_max_attempts": 2}))
+
+
+def _search(client, kb_id, query, chunks):
     response = client.retrieve(knowledgeBaseId=kb_id, retrievalQuery={"text": query},
                                retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": chunks}})
     return response.get("retrievalResults") or []
@@ -78,8 +89,9 @@ def _formatted(results):
     parts = []
     for i, result in enumerate(results, 1):
         score = result.get("score")
-        header = f"[{i}] {_source(result.get('location') or {})}" + (f" (score {score:.2f})" if score is not None
-                                                                    else "")
+        header = f"[{i}] {_source(result.get('location') or {})}"
+        if score is not None:
+            header += f" (score {score:.2f})"
         parts.append(f"{header}\n{(result.get('content') or {}).get('text') or ''}")
     text = "\n\n".join(parts)
     if len(text) <= MAX_RESULT_CHARS:

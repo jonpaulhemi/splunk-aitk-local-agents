@@ -87,7 +87,6 @@ def test_a_capture_with_only_llm_and_mcp_traffic_passes(tmp_path, linktype):
     assert report["connections_without_a_name"] == []
 
 
-
 def test_knowledge_base_searches_are_aws_traffic_and_pass(tmp_path):
     name = "bedrock-agent-runtime.us-west-2.amazonaws.com"
     frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query(name))), 276),
@@ -99,6 +98,7 @@ def test_knowledge_base_searches_are_aws_traffic_and_pass(tmp_path):
     assert report["pass"] is True
     assert report["names"] == [name]
     assert report["connections_without_a_name"] == []
+
 
 def test_any_splunk_cloud_name_fails_it(tmp_path):
     frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query("tenant.api.scs.splunk.com"))), 276),

@@ -14,6 +14,7 @@ import pytest
 from harness.aitk import create_agent, run_aiagent
 from harness.fake_bedrock import FakeBedrock, chunk
 from harness.fake_llm import FakeLLM, offered_tools, tool_call, tool_results
+from harness.fake_mcp import FakeMCP
 
 KEY_ID = "AKIAFAKEKBUSER000001"
 SECRET = "fake-kb-secret-key"
@@ -55,9 +56,9 @@ def _llm_block(llm):
                     "request_timeout": 30, "reasoning_effort": "NONE"}}
 
 
-def _run(aitk, splunkd, admin, agent, llm, vector_dbs, prompt="Who do I page for a disk alert?"):
+def _run(aitk, splunkd, admin, agent, llm, vector_dbs, prompt="Who do I page for a disk alert?", **params):
     df = run_aiagent(aitk, splunkd, admin, agent, _llm_block(llm), prompt, [{"x": 1}], vector_dbs=vector_dbs,
-                     conversation_tool="true")
+                     conversation_tool="true", **params)
     return df.iloc[0]
 
 
@@ -186,3 +187,37 @@ def test_other_vector_db_types_and_no_knowledge_bases_offer_no_search(aitk, splu
     assert row["result_1"] == "plain"
     assert offered_tools(llm.requests[0]["body"]) == []
     assert aws.retrieve_calls == []
+
+
+def test_a_connection_without_keys_never_falls_back_to_other_aws_credentials(aitk, splunkd, admin, agent, llm, aws,
+                                                                            monkeypatch):
+    # Credentials in splunkd's environment (or an instance role) must not stand in for missing ones.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAAMBIENTKEY000001")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+    keyless = {**RUNBOOKS, "connection_details": {"region": "us-west-2", "aws_access_key_id": "",
+                                                  "aws_access_key_token": "", "role_arn": ""}}
+    llm.script = _searches_then_answers()
+
+    row = _run(aitk, splunkd, admin, agent, llm, [keyless])
+
+    assert row["result_1"] == ("From the runbooks: The knowledge base connection needs a region, "
+                               "an access key ID and a secret key")
+    assert aws.retrieve_calls == []
+
+
+def test_a_search_never_waits_for_approval_even_beside_gated_tools(aitk, splunkd, admin, agent, llm, aws,
+                                                                  splunk_home):
+    mcp = FakeMCP(splunk_home / "server.pem", splunk_home / "server.key").start()
+    try:
+        gated = {"name": "splunk", "type": "SPLUNK", "tools": ["delete_index"],
+                 "approval_required_tools": ["delete_index"], "require_approval": True,
+                 "connection_details": {"url": mcp.url, "auth_token": "splunk-mcp-token"}}
+        llm.script = _searches_then_answers()
+
+        row = _run(aitk, splunkd, admin, agent, llm, [RUNBOOKS], mcps=[gated], session_id="kb-approvals")
+    finally:
+        mcp.stop()
+
+    assert row["status"] == "success", row["error"]
+    assert not row["hitl_status"]
+    assert len(aws.retrieve_calls) == 1
