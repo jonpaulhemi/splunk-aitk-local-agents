@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-10-29T01:48:31Z",
+  "pass": true,
+  "splunk_cloud": [],
+  "platform_telemetry": [],
+  "names": [
+    "api.openai.com",
+    "bedrock-runtime.us-east-1.amazonaws.com",
+    "chatgpt.com",
+    "splunk-test",
+    "sts.us-east-1.amazonaws.com"
+  ],
+  "connections": [
+    "100.29.182.93:443",
+    "104.18.32.47:443",
+    "13.217.79.113:443",
+    "13.217.79.90:443",
+    "162.159.140.245:443",
+    "172.66.0.243:443",
+    "184.198.239.85:443",
+    "23.143.196.202:123/udp",
+    "23.172.120.59:123/udp",
+    "44.216.186.230:443",
+    "44.216.190.41:443"
+  ],
+  "connections_without_a_name": []
+}

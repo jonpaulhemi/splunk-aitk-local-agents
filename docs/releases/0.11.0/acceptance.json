@@ -1,0 +1,44 @@
+{
+  "started_at": "2026-10-29T01:42:08Z",
+  "duration_s": 370.4,
+  "search_head": "splunk-test.0bn0x.com",
+  "templates": {
+    "openai": "AitkLocal070OpenAIMCP",
+    "bedrock": "AitkLocal070BedrockMCP",
+    "approval": "AitkLocal0100Approvals"
+  },
+  "pass": true,
+  "checks": {
+    "installed": {"pass": true, "version": "0.11.0", "seconds": 0.2},
+    "setup": {
+      "pass": true,
+      "changed": [],
+      "already_off": [
+        "input slim_agent_templates://managed_templates",
+        "input splunk_managed_skills://catalog",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Lineage Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - AI Agent - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Sourcetype Inference"
+      ],
+      "seconds": 0.5
+    },
+    "diagnostics": {"pass": true, "python": "3.13.11", "imported": 79, "seconds": 2.5},
+    "create_openai": {"pass": true, "agent": "aitk_acceptance_20261029014208_openai", "reply_recovered": "HTTP 500", "seconds": 14.5},
+    "create_bedrock": {"pass": true, "agent": "aitk_acceptance_20261029014208_bedrock", "seconds": 13.5},
+    "create_approval": {"pass": true, "agent": "aitk_acceptance_20261029014208_approval", "reply_recovered": "HTTP 500", "seconds": 14.2},
+    "create_structured": {"pass": true, "agent": "aitk_acceptance_20261029014208_structured", "reply_recovered": "HTTP 500", "seconds": 14.2},
+    "openai_answer": {"pass": true, "seconds": 24.4},
+    "openai_mcp_tool": {"pass": true, "tool_calls": 1, "tools": ["splunk_run_query"], "seconds": 26.9},
+    "openai_session_memory": {"pass": true, "seconds": 47.0},
+    "bedrock_answer": {"pass": true, "seconds": 21.5},
+    "bedrock_mcp_tool": {"pass": true, "tool_calls": 1, "tools": ["splunk_run_query"], "seconds": 26.2},
+    "bedrock_session_memory": {"pass": true, "seconds": 43.5},
+    "structured_output": {"pass": true, "seconds": 24.3},
+    "approval": {"pass": true, "pending": 1, "tools": ["splunk_run_query"], "seconds": 47.3},
+    "bedrock_region": {"pass": true, "regions": ["us-east-1"], "seconds": 1.2},
+    "log_privacy": {"pass": true, "seconds": 2.3},
+    "delete_agents": {"pass": true, "deleted": 4, "replies_recovered": 3, "seconds": 46.0}
+  }
+}
