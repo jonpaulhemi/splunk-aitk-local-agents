@@ -39,6 +39,7 @@ SPLUNK_CLOUD_DOMAINS = ("splunk.com", "splunkcloud.com", "splunkcloudgc.com", "s
 ETHERNET, LINUX_SLL, LINUX_SLL2 = 1, 113, 276
 RAW_IP = (101, 12, 228, 229)
 TCP, UDP = 6, 17
+LIMITED_BROADCAST = ipaddress.ip_address("255.255.255.255")
 PCAP_MAGIC = {0xA1B2C3D4: "<", 0xA1B23C4D: "<", 0xD4C3B2A1: ">", 0x4D3CB2A1: ">"}
 
 # Everything but loopback. (Flag and payload filters would be smaller, but
@@ -52,11 +53,17 @@ def is_splunk_cloud(name):
 
 
 def summarize(pcap_path, local_addresses=()):
-    """The report for one capture: names seen, outbound connections, and whether it passes."""
+    """The report for one capture: names seen, outbound connections, and whether it passes.
+
+    With `local_addresses`, only packets this host sends count; multicast and
+    broadcast never do, as they don't leave the LAN.
+    """
     local = {ipaddress.ip_address(a) for a in local_addresses}
     names, connections, named_ips = set(), set(), set()
-    for dst, proto, segment in _ip_packets(pcap_path):
-        if dst.is_loopback or dst in local:
+    for src, dst, proto, segment in _ip_packets(pcap_path):
+        if dst.is_loopback or dst in local or dst.is_multicast or dst == LIMITED_BROADCAST:
+            continue
+        if local and src not in local:
             continue
         if proto == UDP and len(segment) >= 8:
             dport = struct.unpack(">H", segment[2:4])[0]
@@ -89,7 +96,7 @@ def _address(ip, port):
 
 
 def _ip_packets(pcap_path):
-    """(destination address, protocol, transport segment) for each IP packet."""
+    """(source, destination, protocol, transport segment) for each IP packet."""
     with open(pcap_path, "rb") as f:
         header = f.read(24)
         endian = PCAP_MAGIC.get(struct.unpack("<I", header[:4])[0]) if len(header) == 24 else None
@@ -129,9 +136,9 @@ def _ip(packet):
         return None
     if packet[0] >> 4 == 4 and len(packet) >= 20:
         header = (packet[0] & 0x0F) * 4
-        return ipaddress.ip_address(packet[16:20]), packet[9], packet[header:]
+        return ipaddress.ip_address(packet[12:16]), ipaddress.ip_address(packet[16:20]), packet[9], packet[header:]
     if packet[0] >> 4 == 6 and len(packet) >= 40:
-        return ipaddress.ip_address(packet[24:40]), packet[6], packet[40:]
+        return ipaddress.ip_address(packet[8:24]), ipaddress.ip_address(packet[24:40]), packet[6], packet[40:]
     return None
 
 

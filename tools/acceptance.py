@@ -40,7 +40,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENTS = "/services/mltk/agents"
+# AI Toolkit's agents API only answers in its own app's namespace (405 at
+# /services/mltk/agents on a live 6.2.0 search head).
+AGENTS = "/servicesNS/{user}/Splunk_ML_Toolkit/mltk/agents"
 STAND_IN = "/servicesNS/nobody/splunk_cloud_connect/v1alpha1/cloud-connection/splunk_ml_toolkit"
 RESUME_PROMPT = "Tool approval decisions submitted."
 DEFAULT_MCP_QUESTION = ("Use the Splunk search tool to count the events in index=_internal over the last "
@@ -169,6 +171,17 @@ class Run:
         self.runtime_ids = {}
         # Given in memory checks, then looked for in aitk_local.log.
         self.code_words = []
+        self.agents = None  # the agents API path, once the user is known
+
+    def _agents(self):
+        if self.agents is None:
+            status, body = self.splunkd.call("GET", "/services/authentication/current-context",
+                                             {"output_mode": "json"})
+            user = _first_content(body).get("username") if status == 200 else None
+            if not user:
+                raise Failed(f"couldn't read the signed-in user (HTTP {status})")
+            self.agents = AGENTS.format(user=urllib.parse.quote(user, safe=""))
+        return self.agents
 
     def check(self, name, fn):
         started = time.monotonic()
@@ -230,7 +243,7 @@ class Run:
     # Agents
 
     def create(self, kind, template, with_tools=True, **extra):
-        status, body = self.splunkd.call("GET", AGENTS, {"name": template})
+        status, body = self.splunkd.call("GET", self._agents(), {"name": template})
         if status != 200:
             raise Failed(f"template agent {template!r} not found (HTTP {status})")
         latest = body["versions"][0]
@@ -246,13 +259,13 @@ class Run:
         }
         if with_tools and not settings["mcps"]:
             raise Failed(f"template agent {template!r} has no MCP connection")
-        status, body = self.splunkd.call("POST", AGENTS, body=settings, timeout=660)
+        status, body = self.splunkd.call("POST", self._agents(), body=settings, timeout=660)
         if status != 200:
             raise Failed(f"creating {name} returned HTTP {status}: {_short(body)}")
         self.created.append(name)
         deadline = time.monotonic() + self.args.ready_timeout
         while time.monotonic() < deadline:
-            status, body = self.splunkd.call("GET", AGENTS, {"name": name})
+            status, body = self.splunkd.call("GET", self._agents(), {"name": name})
             version = body["versions"][0] if status == 200 else {}
             if version.get("state") == "Available":
                 self.runtime_ids[kind] = (version.get("runtime_params") or {}).get("runtime_id")
@@ -265,10 +278,10 @@ class Run:
     def delete_all(self):
         left = []
         for name in self.created:
-            status, _ = self.splunkd.call("DELETE", f"{AGENTS}/{urllib.parse.quote(name)}", timeout=660)
+            status, _ = self.splunkd.call("DELETE", f"{self._agents()}/{urllib.parse.quote(name)}", timeout=660)
             deadline = time.monotonic() + 120
             while status in (200, 202) and time.monotonic() < deadline:
-                status, _ = self.splunkd.call("GET", AGENTS, {"name": name})
+                status, _ = self.splunkd.call("GET", self._agents(), {"name": name})
                 if status == 404:
                     break
                 time.sleep(3)

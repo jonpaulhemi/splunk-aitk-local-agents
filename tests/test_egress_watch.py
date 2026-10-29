@@ -143,3 +143,19 @@ def test_a_pcapng_file_is_refused_rather_than_misread(tmp_path):
 
     with pytest.raises(ValueError, match="isn't a pcap file"):
         egress_watch.summarize(path)
+
+
+def test_only_traffic_this_host_sends_counts(tmp_path):
+    # Seen live: a host-wide capture picks up the LAN's mDNS, DHCP and
+    # discovery broadcasts from other machines, and the host's own.
+    frames = [_link(_ipv4("224.0.0.251", 17, _udp(5353, b"x"), src="192.168.1.30"), 276),
+              _link(_ipv4("255.255.255.255", 17, _udp(10001, b"x"), src="192.168.1.31"), 276),
+              _link(_ipv4("224.0.0.251", 17, _udp(5353, b"x")), 276),
+              _link(_ipv4("255.255.255.255", 17, _udp(67, b"x"), src="0.0.0.0"), 276),
+              _link(_ipv6("ff02::fb", 17, _udp(5353, b"x")), 276, ipv6=True),
+              _link(_ipv4("52.61.0.10", 6, _tcp(443, syn=True), src="192.168.1.32"), 276),
+              _link(_ipv4("52.61.0.11", 6, _tcp(443, syn=True)), 276)]
+
+    report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames), local_addresses={SEARCH_HEAD, "fd00::5"})
+
+    assert report["connections"] == ["52.61.0.11:443"]
