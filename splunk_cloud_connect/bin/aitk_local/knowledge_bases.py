@@ -8,21 +8,28 @@ by its description, which is all the model learns about it.
 
 A knowledge base search is Bedrock Agent Runtime's Retrieve: the best-matching
 chunks and where they came from, never a generated answer. The agent's own
-model does the writing.
+model does the writing. With a role_arn, searches run as that role, assumed
+once when the run starts.
 """
 
 import asyncio
 import re
 
-from aitk_local import config, log
+from aitk_local import config, llm, log
 
 TYPE = "AWS_KB"
 TOOL_PREFIX = "search_knowledge_base_"
 MAX_RESULT_CHARS = 8000
 
 
+class Unusable(Exception):
+    """A knowledge base can't be used at all; the message names it and the AWS error code, never secrets."""
+
+
 def tools(knowledge_bases):
-    """One search tool per AWS_KB knowledge base in the payload's `knowledge_bases` block."""
+    """One search tool per AWS_KB knowledge base in the payload's `knowledge_bases` block.
+
+    Blocking: it assumes the knowledge bases' roles."""
     entries = (knowledge_bases or {}).get("vector_dbs") or []
     by_id = {}
     for entry in entries:
@@ -39,7 +46,7 @@ def _tool(kb_id, entry):
     from langchain_core.tools import StructuredTool, ToolException
 
     chunks, timeout = config.chunks_per_search(), config.search_timeout_seconds()
-    client = _client(entry.get("connection_details") or {}, timeout)
+    client = _client(kb_id, entry.get("connection_details") or {}, timeout)
 
     async def search(query: str) -> str:
         if client is None:
@@ -58,7 +65,7 @@ def _tool(kb_id, entry):
                                         description=entry.get("description") or f"Search knowledge base {kb_id}.")
 
 
-def _client(details, timeout):
+def _client(kb_id, details, timeout):
     """A Bedrock Agent Runtime client for one knowledge base's connection, made
     once per run; None if the connection lacks credentials, which are never
     taken from the environment instead."""
@@ -70,10 +77,16 @@ def _client(details, timeout):
     from botocore.config import Config
 
     # Each search is bounded by the tool's own timeout; one retry for throttling.
-    return boto3.client("bedrock-agent-runtime", region_name=region, aws_access_key_id=key_id,
-                        aws_secret_access_key=secret, aws_session_token=None,
-                        config=Config(connect_timeout=timeout, read_timeout=timeout,
-                                      retries={"total_max_attempts": 2}))
+    boto_config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 2})
+    credentials = {"aws_access_key_id": key_id, "aws_secret_access_key": secret, "aws_session_token": None}
+    role_arn = details.get("role_arn")
+    if role_arn:
+        try:
+            credentials = llm.assumed_role(region, key_id, secret, role_arn, boto_config)
+        except Exception as e:
+            raise Unusable(f"Knowledge base {kb_id} couldn't be used: assuming role {role_arn} failed "
+                           f"({_reason(e)})") from None
+    return boto3.client("bedrock-agent-runtime", region_name=region, config=boto_config, **credentials)
 
 
 def _search(client, kb_id, query, chunks):

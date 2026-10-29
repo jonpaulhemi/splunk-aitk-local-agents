@@ -12,7 +12,7 @@ import json
 import pytest
 
 from harness.aitk import create_agent, run_aiagent
-from harness.fake_bedrock import FakeBedrock, chunk
+from harness.fake_bedrock import ROLE_KEY_ID, ROLE_SESSION_TOKEN, FakeBedrock, chunk
 from harness.fake_llm import FakeLLM, offered_tools, tool_call, tool_results
 from harness.fake_mcp import FakeMCP
 
@@ -22,6 +22,8 @@ RUNBOOKS = {"type": "AWS_KB", "kb_id": "EJGJR4SKJL", "description": "On-call run
             "connection_details": {"region": "us-west-2", "aws_access_key_id": KEY_ID,
                                    "aws_access_key_token": SECRET, "role_arn": ""}}
 TOOL = "search_knowledge_base_EJGJR4SKJL"
+ROLE = "arn:aws:iam::123456789012:role/aitk-kb-search"
+WITH_ROLE = {**RUNBOOKS, "connection_details": {**RUNBOOKS["connection_details"], "role_arn": ROLE}}
 
 
 @pytest.fixture
@@ -221,3 +223,54 @@ def test_a_search_never_waits_for_approval_even_beside_gated_tools(aitk, splunkd
     assert row["status"] == "success", row["error"]
     assert not row["hitl_status"]
     assert len(aws.retrieve_calls) == 1
+
+
+# Assuming the IAM role (#41)
+
+def test_a_role_arn_is_assumed_once_and_searches_use_its_credentials(aitk, splunkd, admin, agent, llm, aws):
+    def script(request):
+        done = tool_results(request)
+        if len(done) < 2:
+            return tool_call(TOOL, {"query": f"q{len(done)}"}, call_id=f"call_{len(done)}")
+        return "done"
+    llm.script = script
+
+    row = _run(aitk, splunkd, admin, agent, llm, [WITH_ROLE])
+
+    assert row["status"] == "success", row["error"]
+    [assumed] = aws.assume_role_calls
+    assert (assumed["key_id"], assumed["region"], assumed["form"]["RoleArn"]) == (KEY_ID, "us-west-2", ROLE)
+    assert [(c["key_id"], c["session_token"]) for c in aws.retrieve_calls] == [(ROLE_KEY_ID, ROLE_SESSION_TOKEN)] * 2
+
+
+def test_a_role_that_cant_be_assumed_fails_the_run_naming_the_role_and_code(aitk, splunkd, admin, agent, llm, aws,
+                                                                           splunk_home):
+    aws.reject_key_ids.add(KEY_ID)
+
+    row = _run(aitk, splunkd, admin, agent, llm, [WITH_ROLE])
+
+    assert row["status"] == "error"
+    assert row["error"] == (f"Knowledge base EJGJR4SKJL couldn't be used: assuming role {ROLE} failed "
+                            "(InvalidClientTokenId)")
+    assert llm.requests == [] and aws.retrieve_calls == []
+    log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
+    assert SECRET not in log and "security token included" not in log
+
+
+def test_knowledge_bases_in_different_regions_with_and_without_a_role_work_together(aitk, splunkd, admin, agent,
+                                                                                   llm, aws):
+    policies = {**RUNBOOKS, "kb_id": "POLICY0001", "description": "Security policies.",
+                "connection_details": {**RUNBOOKS["connection_details"], "region": "eu-west-1"}}
+
+    def script(request):
+        done = tool_results(request)
+        steps = [tool_call(TOOL, {"query": "disk"}, call_id="call_1"),
+                 tool_call("search_knowledge_base_POLICY0001", {"query": "passwords"}, call_id="call_2")]
+        return steps[len(done)] if len(done) < len(steps) else "done"
+    llm.script = script
+
+    row = _run(aitk, splunkd, admin, agent, llm, [WITH_ROLE, policies])
+
+    assert row["status"] == "success", row["error"]
+    assert [(c["kb_id"], c["region"], c["key_id"]) for c in aws.retrieve_calls] == [
+        ("EJGJR4SKJL", "us-west-2", ROLE_KEY_ID), ("POLICY0001", "eu-west-1", KEY_ID)]

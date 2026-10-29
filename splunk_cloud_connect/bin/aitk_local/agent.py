@@ -28,7 +28,8 @@ def run(payload):
         response, pending = _within(timeout, _answer(block, payload, trace, attached))
         outcome = _completed(True, response, tool_invocations=trace.calls, hitl_pending=pending,
                              loaded_skills=attached.reported())
-    except (llm.UnusableConnection, mcp_tools.Unusable, structured.Invalid, approvals.NothingWaiting) as e:
+    except (llm.UnusableConnection, mcp_tools.Unusable, knowledge_bases.Unusable, structured.Invalid,
+            approvals.NothingWaiting) as e:
         outcome = _completed(False, error=str(e), tool_invocations=trace.calls, loaded_skills=attached.reported())
     except TimeoutError:
         outcome = _completed(False, error=f"Agent timed out after {timeout}s", tool_invocations=trace.calls,
@@ -129,7 +130,8 @@ async def _answer(block, payload, trace, attached):
         # The model calls tools by name alone.
         raise mcp_tools.Unusable(f"Tool '{skills.TOOL}' is selected from MCP server '{trace.servers[skills.TOOL]}', "
                                  "but this agent's skills need that name; deselect it")
-    tools += skill_tools + knowledge_bases.tools(payload.get("knowledge_bases"))
+    # Assuming knowledge bases' roles calls STS, so it counts against the timeout too.
+    tools += skill_tools + await asyncio.to_thread(knowledge_bases.tools, payload.get("knowledge_bases"))
     trace.kinds[skills.TOOL] = skills.TRACE_TYPE
     # Building a Bedrock model may call STS, so it counts against the timeout.
     model = await asyncio.to_thread(llm.chat_model, block)

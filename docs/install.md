@@ -33,6 +33,7 @@ Next, set up connections and agents in AI Toolkit as usual:
 - MCP connections, marking tools as requiring approval where needed
 - skills, if your agents use them; Splunk-managed skills aren't available offline, since their catalog comes from Splunk's cloud
 - knowledge base connections (AWS KB), if your agents search one; [knowledge-base-setup.md](knowledge-base-setup.md) walks through creating a small one
+  - searches run as the connection's role ARN, assumed with its access key when each run starts; AI Toolkit's own **Test connection** uses the access key directly and ignores the role, so a connection can pass that test and still fail an agent run if the key can't assume the role. The run's error names the role and the AWS error code.
 - agents in Agent Launchpad
 
 ## Upgrading this app
