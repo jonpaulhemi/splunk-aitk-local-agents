@@ -26,6 +26,15 @@ curl -sk -u admin -X POST "https://localhost:8089/services/aitk_local/offline_se
 
 Setup doesn't change Splunk's own platform telemetry, which sends usage data to Splunk (seen: `quickdraw.splunk.com`, `telemetry-splkmobile.dataeng.splunk.com`). That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation** and turn off every kind of sharing, or set `sendAnonymizedUsage`, `sendSupportUsage`, `sendLicenseUsage` and `sendAnonymizedWebAnalytics` to false through `/servicesNS/nobody/splunk_instrumentation/admin/telemetry/general`, then restart. The no-cloud-traffic check in [`docs/release.md`](release.md) fails on this traffic like any other Splunk cloud traffic.
 
+splunkd's app manager also reaches Splunkbase on its own schedule, to download the app catalog from `cdn.splunkbase.splunk.com` and check `apps.splunk.com` for app updates. Setup doesn't change this either, since it's a server-wide setting. To turn it off, add this to `$SPLUNK_HOME/etc/system/local/server.conf` and restart:
+
+```
+[applicationsManagement]
+allowInternetAccess = false
+```
+
+Splunk Web can then no longer browse or install apps from Splunkbase; install them from a file instead.
+
 To also set AI Toolkit's MCP domain allowlist, add `-d allowed_domains=...`. The README explains what that list does and doesn't cover.
 
 Next, set up connections and agents in AI Toolkit as usual:

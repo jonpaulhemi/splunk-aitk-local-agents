@@ -11,7 +11,8 @@ It captures with tcpdump on every interface, then reports each DNS name
 looked up, each TLS server name or proxy CONNECT host, and each new outbound
 connection. It fails if any name belongs to Splunk's cloud (Splunk Cloud
 Services, Cloud Connect, AI Toolkit telemetry, and Splunk's own platform
-telemetry, so turn off Settings > Instrumentation before a run). The other
+telemetry and Splunkbase, so turn off Settings > Instrumentation and
+[applicationsManagement] allowInternetAccess before a run). The other
 names should be only your LLM, knowledge base
 (bedrock-agent-runtime.<region>.amazonaws.com) and MCP hosts.
 
