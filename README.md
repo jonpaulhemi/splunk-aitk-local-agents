@@ -71,6 +71,7 @@ The file holds the conversations, tool results included, in plain form, the same
 - `splunk_cloud_connect/`: the Splunk app itself.
 - `requirements/`, `tools/bundle.py`: the bundled-library build.
 - `tools/contract.py`, `tools/acceptance.py`, `tools/egress_watch.py`: contract tests in one command, and the release acceptance run ([`docs/release.md`](docs/release.md)).
+- `tools/http_debug_guard.py`: workaround for AI Toolkit 6.2.0's `unexpected data received (73)` ([`docs/install.md`](docs/install.md#known-issue-in-ai-toolkit-620)).
 - `tests/`: contract tests that run AI Toolkit's own client code against this app's handlers, served by a fake splunkd.
 - `spike/`: throwaway spike from #2, kept for re-running on other Splunk versions.
 
