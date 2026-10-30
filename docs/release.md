@@ -29,7 +29,7 @@ Leave it running for the next step. It records the following, and fails if any n
 - every TLS server name or HTTP proxy CONNECT host
 - every new outbound connection
 
-The names it lists should be your LLM endpoint, AWS Bedrock (and STS, if a connection assumes a role), Bedrock Agent Runtime (`bedrock-agent-runtime.<region>.amazonaws.com`) if you check a knowledge base, and your MCP servers. Nothing else should appear, apart from Splunk's platform telemetry (`quickdraw.splunk.com`). That goes under `platform_telemetry` and doesn't fail the check, because it's a server-wide setting outside AI Toolkit (see `docs/install.md`).
+The names it lists should be your LLM endpoint, AWS Bedrock (and STS, if a connection assumes a role), Bedrock Agent Runtime (`bedrock-agent-runtime.<region>.amazonaws.com`) if you check a knowledge base, and your MCP servers. Nothing else should appear. Splunk's own platform telemetry fails the check like any other Splunk cloud traffic, so turn off **Settings > Instrumentation** on the search head before the capture (see `docs/install.md`).
 
 It can only fail on names it sees. A connection made by IP address, or one whose name the capture missed, goes under `connections_without_a_name` instead. Look each one up (`dig -x`, or your firewall's logs) before calling the run clean. The setup check in step 4 covers the scheduled traffic that wouldn't fire during a short capture: the sync inputs and telemetry searches must all be off.
 

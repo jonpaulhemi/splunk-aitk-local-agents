@@ -112,17 +112,18 @@ def test_any_splunk_cloud_name_fails_it(tmp_path):
     assert report["splunk_cloud"] == ["acme.splunkcloudgc.com", "api.scs.splunk.com", "tenant.api.scs.splunk.com"]
 
 
-def test_platform_telemetry_is_listed_but_doesnt_fail_it(tmp_path):
-    # Splunk's own platform telemetry (splunk_instrumentation) is a server-wide
-    # admin choice, not AI Toolkit's or this app's traffic.
-    frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query("quickdraw.splunk.com"))), 276),
-              _link(_ipv4("52.32.139.171", 6, _tcp(443, _client_hello("quickdraw.splunk.com"))), 276)]
+@pytest.mark.parametrize("name", ["quickdraw.splunk.com", "telemetry-splkmobile.dataeng.splunk.com"])
+def test_splunk_platform_telemetry_fails_it_too(tmp_path, name):
+    # Splunk's own telemetry (Settings > Instrumentation) is still Splunk cloud
+    # traffic: a release run is made with it turned off (0.12.0, J's call).
+    frames = [_link(_ipv4("10.0.0.2", 17, _udp(53, _dns_query(name))), 276),
+              _link(_ipv4("52.32.139.171", 6, _tcp(443, _client_hello(name))), 276)]
 
     report = egress_watch.summarize(_pcap(tmp_path / "run.pcap", frames))
 
-    assert report["pass"] is True
-    assert report["splunk_cloud"] == []
-    assert report["platform_telemetry"] == ["quickdraw.splunk.com"]
+    assert report["pass"] is False
+    assert report["splunk_cloud"] == [name]
+    assert "platform_telemetry" not in report
 
 
 def test_inbound_and_loopback_traffic_is_left_out(tmp_path):
