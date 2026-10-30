@@ -19,6 +19,7 @@ from aitk_local import config, llm, log
 
 TYPE = "AWS_KB"
 TOOL_PREFIX = "search_knowledge_base_"
+MANAGED = "managedSearchConfiguration"
 MAX_RESULT_CHARS = 8000
 
 
@@ -47,12 +48,13 @@ def _tool(kb_id, entry):
 
     chunks, timeout = config.chunks_per_search(), config.search_timeout_seconds()
     client = _client(kb_id, entry.get("connection_details") or {}, timeout)
+    search_kind = ["vectorSearchConfiguration"]  # until Bedrock says it's a managed knowledge base
 
     async def search(query: str) -> str:
         if client is None:
             raise ToolException("The knowledge base connection needs a region, an access key ID and a secret key")
         try:
-            results = await asyncio.wait_for(asyncio.to_thread(_search, client, kb_id, query, chunks),
+            results = await asyncio.wait_for(asyncio.to_thread(_search, client, kb_id, query, chunks, search_kind),
                                              timeout=timeout)
         except Exception as e:
             if isinstance(e, TimeoutError) or type(e).__name__ in ("ReadTimeoutError", "ConnectTimeoutError"):
@@ -89,10 +91,26 @@ def _client(kb_id, details, timeout):
     return boto3.client("bedrock-agent-runtime", region_name=region, config=boto_config, **credentials)
 
 
-def _search(client, kb_id, query, chunks):
-    response = client.retrieve(knowledgeBaseId=kb_id, retrievalQuery={"text": query},
-                               retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": chunks}})
-    return response.get("retrievalResults") or []
+def _search(client, kb_id, query, chunks, search_kind):
+    """Bedrock's managed knowledge bases refuse vector search settings and want
+    managed search ones. There's no telling which a knowledge base is without
+    another permission (GetKnowledgeBase), so the first refusal switches
+    `search_kind` for the rest of the run."""
+    while True:
+        try:
+            response = client.retrieve(knowledgeBaseId=kb_id, retrievalQuery={"text": query},
+                                       retrievalConfiguration={search_kind[0]: {"numberOfResults": chunks}})
+            return response.get("retrievalResults") or []
+        except Exception as e:
+            if search_kind[0] == MANAGED or not _wants_managed_search(e):
+                raise
+            search_kind[0] = MANAGED
+
+
+def _wants_managed_search(e):
+    # The message is only inspected here, never passed on.
+    error = (getattr(e, "response", None) or {}).get("Error", {})
+    return error.get("Code") == "ValidationException" and MANAGED in str(error.get("Message", ""))
 
 
 def _formatted(results):

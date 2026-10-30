@@ -71,7 +71,7 @@ Create the user first if the console rejects the role's trust policy because the
 1. In AI Toolkit, open the agent connections page and add a connection with **Connection Type: Knowledge base** and **Knowledge base type: AWS KB**.
 2. Fill in the region, the knowledge base ID, the access key and secret key from step 3, and the role ARN `arn:aws:iam::<account-id>:role/aitk-kb-search`.
 3. **Knowledge base id description** is what the agent reads when deciding whether to search. It's the only thing the model learns about the knowledge base, so say what's in it and when to use it. For example: "Our on-call runbooks and escalation rota. Search it for how to handle an alert or who to page."
-4. Click **Test connection** (it fails without the optional search permission on the user; that's fine), then save.
+4. Click **Test connection**, then save. It fails without the optional search permission on the user, and it always fails for Bedrock's *managed* knowledge bases ("vectorSearchConfiguration is not supported for managed knowledge bases"), because AI Toolkit's test only knows vector search. Both are fine: agent runs handle managed knowledge bases.
 5. Edit an agent, attach the knowledge base, and save the agent.
 
 With knowledge base search in place (0.12.0 and later), ask the agent something only your documents answer. The run trace shows a `search_knowledge_base_<id>` call, and the answer can cite the S3 file it came from.

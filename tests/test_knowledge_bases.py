@@ -274,3 +274,33 @@ def test_knowledge_bases_in_different_regions_with_and_without_a_role_work_toget
     assert row["status"] == "success", row["error"]
     assert [(c["kb_id"], c["region"], c["key_id"]) for c in aws.retrieve_calls] == [
         ("EJGJR4SKJL", "us-west-2", ROLE_KEY_ID), ("POLICY0001", "eu-west-1", KEY_ID)]
+
+
+MANAGED_ONLY = ("Incompatible configuration: vectorSearchConfiguration is not supported for managed knowledge "
+                "bases. Use managedSearchConfiguration instead.")
+
+
+def test_a_managed_knowledge_base_is_searched_with_managed_search(aitk, splunkd, admin, agent, llm, aws):
+    # Bedrock's managed knowledge bases refuse vector search settings (live on 0.12.0).
+    def managed(kb_id, request):
+        if "vectorSearchConfiguration" in request["retrievalConfiguration"]:
+            return 400, "ValidationException", MANAGED_ONLY
+        return [chunk("Disk alerts page the storage on-call first.", "s3://runbooks/disk.md", 0.82)]
+    aws.retrieve_script = managed
+
+    def script(request):
+        done = tool_results(request)
+        if len(done) < 2:
+            return tool_call(TOOL, {"query": f"q{len(done)}"}, call_id=f"call_{len(done)}")
+        return f"From the runbooks: {done[-1]}"
+    llm.script = script
+
+    row = _run(aitk, splunkd, admin, agent, llm, [RUNBOOKS])
+
+    assert row["status"] == "success", row["error"]
+    assert "Disk alerts page the storage on-call first." in row["result_1"]
+    # Found out once per run, then searched the managed way straight away.
+    assert [c["body"]["retrievalConfiguration"] for c in aws.retrieve_calls] == [
+        {"vectorSearchConfiguration": {"numberOfResults": 5}},
+        {"managedSearchConfiguration": {"numberOfResults": 5}},
+        {"managedSearchConfiguration": {"numberOfResults": 5}}]
