@@ -9,11 +9,11 @@ This guide gets you a knowledge base you can attach to an agent, for trying out 
 
 ## 2. Create the knowledge base
 
-1. Open **Amazon Bedrock > Knowledge Bases > Create > Knowledge base with vector store**.
+1. Open **Amazon Bedrock > Knowledge Bases > Create** and choose **Unstructured vector store**. Don't choose **Bedrock Managed**: AI Toolkit's connection form tests a knowledge base with vector search settings before saving, managed knowledge bases reject them, so the form won't save one. **Structured data store** (questions turned into SQL against a database) isn't supported either.
 2. Name it, for example `aitk-kb-test`. Under service role, let Bedrock create one. That role is for Bedrock's own ingestion, not for the search head.
 3. Data source: **Amazon S3**, pointing at your bucket. Keep the default parsing and the default chunking, which cuts documents into chunks of about 300 tokens.
 4. Embeddings model: **Titan Text Embeddings V2** (enable model access when the console asks).
-5. Vector store: choose **Quick create a new vector store**, and pick **Amazon S3 Vectors** if it's offered. It's the cheapest option for a test. OpenSearch Serverless works too, but it bills for its minimum capacity for as long as it exists.
+5. Vector store: create a new one, and pick **Amazon S3 Vectors** if it's offered. It's the cheapest option for a test. OpenSearch Serverless works too, but it bills for its minimum capacity for as long as it exists.
 6. Create the knowledge base, then open its data source and click **Sync**. Wait until the sync shows as completed.
 7. Copy the **Knowledge base ID** (10 characters, like `EJGJR4SKJL`) from the knowledge base's overview.
 8. Optional check: use **Test knowledge base**, turn off "Generate responses", and run a query. You should see chunks from your documents.

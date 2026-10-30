@@ -11,6 +11,7 @@ Skills and AWS knowledge bases. The acceptance and no-cloud-traffic reports go i
 
 **Known issues**
 - **AI Toolkit's Test connection for knowledge bases** uses the access key directly and ignores the role ARN, so a connection can pass it and still fail an agent run if the key can't assume the role.
+- **Knowledge base types:** only unstructured vector-store knowledge bases are supported. AI Toolkit's connection form can't save Bedrock Managed ones, because its test uses vector search settings they reject, and structured data stores (SQL) aren't supported.
 - **Long-term memory** (across sessions) isn't supported. AI Toolkit's invoke doesn't say which user is chatting, so a memory per agent would be shared by everyone who uses it.
 - The 0.11.0 known issues below still apply.
 
