@@ -2,7 +2,7 @@
 
 ## 0.13.0
 
-Bedrock models and knowledge bases with no access keys. The acceptance report goes in `docs/releases/0.13.0/` once that run passes.
+Bedrock models and knowledge bases with no access keys. The acceptance report is in [`docs/releases/0.13.0/`](releases/0.13.0/): it passed on 31 Oct 2026 with Bedrock and a knowledge base as instance-role connections. The OpenAI-compatible checks were skipped by request, after being verified separately.
 
 - **Instance-role connections:** a Bedrock model or knowledge base connection with a role ARN and no access keys.
   - The runtime takes the EC2 instance profile's credentials from IMDSv2 only, never from `AWS_*` environment variables or `~/.aws`.
