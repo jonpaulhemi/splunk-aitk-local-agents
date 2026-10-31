@@ -292,3 +292,132 @@ def test_when_listing_is_refused_the_admin_types_the_model_id(splunkd, admin, aw
     assert response.status_code == 200
     assert response.json() == {"models": [], "message": f"Couldn't list models as {ROLE} "
                                                         "(AccessDeniedException). Type the model ID instead."}
+
+
+# Knowledge base connections (#50)
+
+KB_ROLE = "arn:aws:iam::210987654321:role/kb-search"
+RUNBOOKS = {"name": "runbooks", "region": "us-west-2", "role_arn": KB_ROLE, "kb_id": "EJGJR4SKJL",
+            "description": "On-call runbooks and the escalation rota."}
+
+
+def _aitk_kbs(aitk, splunkd, token):
+    manager = aitk.vector_db_config_manager.ConfigManager(searchinfo(splunkd, token))
+    return {c["name"]: c for c in manager.get_config()}
+
+
+def _kb_secret(splunkd, name):
+    return json.loads(splunkd.passwords[("Splunk_ML_Toolkit", "aitk_vector_db_creds", name)])
+
+
+def test_an_admin_creates_a_knowledge_base_that_ai_toolkit_stores_without_keys(aitk, splunkd, admin, aws, imds):
+    response = _call(splunkd, admin, "POST", "/knowledge_bases", RUNBOOKS)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["test"] == {"ok": True, "message": f"Assumed role {KB_ROLE} and searched knowledge base "
+                                                              "EJGJR4SKJL"}
+    stored = _aitk_kbs(aitk, splunkd, admin)["runbooks_instance_role"]
+    assert stored["type"] == "AWS_KB" and stored["description"] == RUNBOOKS["description"]
+    # AI Toolkit's aiagent reads the region from details.aws_region and the rest from the secret.
+    assert (stored["details"]["aws_region"], stored["details"]["kb_id"]) == ("us-west-2", "EJGJR4SKJL")
+    assert _kb_secret(splunkd, "runbooks_instance_role") == {
+        "aws_access_key_id": None, "aws_access_key_token": None, "role_arn": KB_ROLE}
+    [assumed] = aws.assume_role_calls
+    assert (assumed["key_id"], assumed["region"], assumed["form"]["RoleArn"]) == (INSTANCE_KEY_ID, "us-west-2",
+                                                                                 KB_ROLE)
+    [search] = aws.retrieve_calls
+    assert (search["kb_id"], search["key_id"]) == ("EJGJR4SKJL", ROLE_KEY_ID)
+    assert search["body"]["retrievalConfiguration"] == {"vectorSearchConfiguration": {"numberOfResults": 1}}
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"kb_id": "EJGJR4"}, "The knowledge base ID is 10 letters and digits, like EJGJR4SKJL"),
+    ({"description": ""}, "The knowledge base needs a description: it's all the agent learns about it"),
+    ({"role_arn": "kb-search"}, "The role ARN must look like arn:<partition>:iam::<12-digit account>:role/<name>"),
+])
+def test_an_incomplete_knowledge_base_is_rejected(aitk, splunkd, admin, aws, imds, change, message):
+    response = _call(splunkd, admin, "POST", "/knowledge_bases", {**RUNBOOKS, **change})
+
+    assert response.status_code == 400
+    assert response.json()["message"] == message
+    assert _aitk_kbs(aitk, splunkd, admin) == {}
+
+
+def test_a_failed_knowledge_base_test_says_which_step_failed(aitk, splunkd, admin, aws, imds):
+    aws.retrieve_script = lambda kb_id, request: (403, "AccessDeniedException", "not authorized")
+
+    response = _call(splunkd, admin, "POST", "/knowledge_bases", RUNBOOKS)
+
+    assert response.status_code == 422
+    assert response.json()["test"] == {
+        "ok": False, "step": "bedrock", "code": "AccessDeniedException",
+        "message": f"Assumed role {KB_ROLE}, but the knowledge base search failed (AccessDeniedException). "
+                   "Check the role's Bedrock permissions."}
+    assert _aitk_kbs(aitk, splunkd, admin) == {}
+
+    aws.reject_key_ids.add(INSTANCE_KEY_ID)
+    response = _call(splunkd, admin, "POST", "/knowledge_bases", {**RUNBOOKS, "save_anyway": True})
+
+    assert response.status_code == 201
+    assert response.json()["test"]["step"] == "assume_role"
+    assert "runbooks_instance_role" in _aitk_kbs(aitk, splunkd, admin)
+
+
+def test_knowledge_bases_are_listed_beside_models(splunkd, admin, aws, imds):
+    _call(splunkd, admin, "POST", "/knowledge_bases", RUNBOOKS)
+    _call(splunkd, admin, "POST", "/models", GLM)
+
+    listing = _call(splunkd, admin, "GET").json()
+
+    assert listing["knowledge_bases"] == [{"name": "runbooks_instance_role", "region": "us-west-2",
+                                           "role_arn": KB_ROLE, "kb_id": "EJGJR4SKJL",
+                                           "description": RUNBOOKS["description"]}]
+    assert [m["name"] for m in listing["models"]] == ["glm_instance_role"]
+
+
+def test_an_admin_edits_a_knowledge_base_and_its_keys_stay_empty(aitk, splunkd, admin, aws, imds):
+    _call(splunkd, admin, "POST", "/knowledge_bases", RUNBOOKS)
+    other_role = "arn:aws:iam::210987654321:role/kb-search-2"
+
+    response = _call(splunkd, admin, "POST", "/knowledge_bases/runbooks_instance_role",
+                     {**RUNBOOKS, "region": "eu-west-1", "role_arn": other_role, "description": "Runbooks v2."})
+
+    assert response.status_code == 200, response.text
+    stored = _aitk_kbs(aitk, splunkd, admin)["runbooks_instance_role"]
+    assert (stored["details"]["aws_region"], stored["description"]) == ("eu-west-1", "Runbooks v2.")
+    assert _kb_secret(splunkd, "runbooks_instance_role") == {
+        "aws_access_key_id": None, "aws_access_key_token": None, "role_arn": other_role}
+
+
+def test_an_admin_deletes_a_knowledge_base(aitk, splunkd, admin, aws, imds):
+    _call(splunkd, admin, "POST", "/knowledge_bases", RUNBOOKS)
+
+    response = _call(splunkd, admin, "DELETE", "/knowledge_bases/runbooks_instance_role")
+
+    assert response.status_code == 200, response.text
+    assert _aitk_kbs(aitk, splunkd, admin) == {}
+    assert ("Splunk_ML_Toolkit", "aitk_vector_db_creds", "runbooks_instance_role") not in splunkd.passwords
+    assert _call(splunkd, admin, "GET").json()["knowledge_bases"] == []
+
+
+def test_a_model_connection_cant_be_edited_as_a_knowledge_base(splunkd, admin, aws, imds):
+    _call(splunkd, admin, "POST", "/models", GLM)
+
+    response = _call(splunkd, admin, "DELETE", "/knowledge_bases/glm_instance_role")
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "glm_instance_role isn't an instance-role connection made in Cloud Connect"
+
+
+def test_key_based_knowledge_bases_cant_be_edited_or_deleted_here(aitk, splunkd, admin, aws, imds):
+    body = {"name": "keys_kb", "type": "AWS_KB", "description": "d",
+            "details": {"aws_region": "us-west-2", "kb_id": "EJGJR4SKJL", "aws_access_key_id": "AKIAFAKE000000000001",
+                        "aws_access_key_token": "fake-secret", "role_arn": KB_ROLE}}
+    created = httpx.post(f"{splunkd.uri}/servicesNS/admin/Splunk_ML_Toolkit/mltk/vector_stores",
+                         headers={"Authorization": f"Splunk {admin}"}, json=body, verify=False)
+    assert created.status_code == 200, created.text
+
+    response = _call(splunkd, admin, "DELETE", "/knowledge_bases/keys_kb")
+
+    assert response.status_code == 404
+    assert "keys_kb" in _aitk_kbs(aitk, splunkd, admin)
