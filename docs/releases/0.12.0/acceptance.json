@@ -1,0 +1,148 @@
+{
+  "started_at": "2026-10-31T00:46:25Z",
+  "duration_s": 464.5,
+  "search_head": "splunk-test.0bn0x.com",
+  "templates": {
+    "openai": "AitkLocal070OpenAIMCP",
+    "bedrock": "AitkLocal070BedrockMCP",
+    "approval": "AitkLocal0100Approvals",
+    "knowledge_base": "test"
+  },
+  "pass": true,
+  "checks": {
+    "installed": {
+      "pass": true,
+      "version": "0.12.0",
+      "seconds": 0.3
+    },
+    "setup": {
+      "pass": true,
+      "changed": [],
+      "already_off": [
+        "input slim_agent_templates://managed_templates",
+        "input splunk_managed_skills://catalog",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Lineage Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - AI Agent - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Sourcetype Inference"
+      ],
+      "seconds": 0.6
+    },
+    "diagnostics": {
+      "pass": true,
+      "python": "3.13.11",
+      "imported": 79,
+      "seconds": 2.5
+    },
+    "create_skill": {
+      "pass": true,
+      "skill": "aitk_acceptance_20261031004625_skill",
+      "seconds": 0.9
+    },
+    "create_openai": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_openai",
+      "seconds": 17.3
+    },
+    "create_bedrock": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_bedrock",
+      "seconds": 13.0
+    },
+    "create_approval": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_approval",
+      "seconds": 12.9
+    },
+    "create_structured": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_structured",
+      "seconds": 13.1
+    },
+    "create_skills": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_skills",
+      "seconds": 12.8
+    },
+    "create_knowledge_base": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031004625_knowledge_base",
+      "seconds": 13.2
+    },
+    "openai_answer": {
+      "pass": true,
+      "seconds": 24.3
+    },
+    "openai_mcp_tool": {
+      "pass": true,
+      "tool_calls": 1,
+      "tools": [
+        "splunk_run_query"
+      ],
+      "seconds": 26.0
+    },
+    "openai_session_memory": {
+      "pass": true,
+      "seconds": 44.5
+    },
+    "bedrock_answer": {
+      "pass": true,
+      "seconds": 21.2
+    },
+    "bedrock_mcp_tool": {
+      "pass": true,
+      "tool_calls": 1,
+      "tools": [
+        "splunk_run_query"
+      ],
+      "seconds": 26.1
+    },
+    "bedrock_session_memory": {
+      "pass": true,
+      "seconds": 44.9
+    },
+    "structured_output": {
+      "pass": true,
+      "seconds": 23.6
+    },
+    "approval": {
+      "pass": true,
+      "pending": 1,
+      "tools": [
+        "splunk_run_query"
+      ],
+      "seconds": 48.3
+    },
+    "skills": {
+      "pass": true,
+      "seconds": 22.6
+    },
+    "knowledge_base": {
+      "pass": true,
+      "searches": 1,
+      "seconds": 26.6
+    },
+    "bedrock_region": {
+      "pass": true,
+      "regions": [
+        "us-east-1"
+      ],
+      "seconds": 1.2
+    },
+    "log_privacy": {
+      "pass": true,
+      "seconds": 2.0
+    },
+    "delete_agents": {
+      "pass": true,
+      "deleted": 6,
+      "seconds": 65.3
+    },
+    "delete_skills": {
+      "pass": true,
+      "deleted": 1,
+      "seconds": 1.5
+    }
+  }
+}
