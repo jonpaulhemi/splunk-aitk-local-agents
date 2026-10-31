@@ -11,6 +11,7 @@ Skills and AWS knowledge bases. The acceptance and no-cloud-traffic reports go i
 - **New:** [`knowledge-base-setup.md`](knowledge-base-setup.md), a guide to making a small knowledge base for trying this out. The acceptance run gains a skills check, and a knowledge base check with `--knowledge-base`.
 
 **Known issues**
+- **AI Toolkit 6.2.0 "unexpected data received (73)":** still AI Toolkit's own, but now with a cause and a workaround. [`tools/http_debug_guard.py`](../tools/http_debug_guard.py) stops the HTTP debug output that corrupts AI Toolkit's REST replies; see "Known issue in AI Toolkit 6.2.0" in `docs/install.md`.
 - **AI Toolkit's Test connection for knowledge bases** uses the access key directly and ignores the role ARN, so a connection can pass it and still fail an agent run if the key can't assume the role.
 - **Knowledge base types:** only unstructured vector-store knowledge bases are supported. AI Toolkit's connection form can't save Bedrock Managed ones, because its test uses vector search settings they reject, and structured data stores (SQL) aren't supported.
 - **Long-term memory** (across sessions) isn't supported. AI Toolkit's invoke doesn't say which user is chatting, so a memory per agent would be shared by everyone who uses it.
