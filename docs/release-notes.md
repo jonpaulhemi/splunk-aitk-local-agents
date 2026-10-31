@@ -18,6 +18,7 @@ Bedrock models and knowledge bases with no access keys. The acceptance and no-cl
 - **`| ai`:** AI Toolkit's own `| ai` command works with instance-role model connections, unchanged (best effort; see the known issues).
 - **Egress:** instance-role connections also reach the instance metadata service (link-local `169.254.169.254`) and STS in the connection's region. Still no Splunk cloud traffic.
 - **New:** [`instance-role-connections.md`](instance-role-connections.md), covering IAM setup across two accounts, IMDS, the page and REST. The acceptance run gains `--instance-role`.
+- **Install guide:** step 3 now covers `advertised_host`, which must be a name on splunkd's TLS certificate. Without it, creating an agent fails with a hostname mismatch on hosts such as EC2, whose own name isn't on the certificate.
 
 **Known issues**
 - **AI Toolkit's Test connection button** always fails for instance-role connections, models and knowledge bases alike, since it needs access keys. Use the setup page's test.

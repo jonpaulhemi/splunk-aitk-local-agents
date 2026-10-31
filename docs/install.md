@@ -9,8 +9,21 @@ For one standalone Splunk Enterprise search head on Linux x86_64. AI Toolkit 6.2
    ```
    $SPLUNK_HOME/bin/splunk install app splunk_cloud_connect-<version>.tgz
    ```
-3. **Restart splunkd.** The app has no setup page, and Splunk Web won't ask for one.
-4. **Check the install.** As an admin, run:
+3. **Set the runtime's host name.** AI Toolkit reaches the local runtime at `https://<advertised_host>:8089`, and it checks splunkd's TLS certificate against that name. If you don't set one, the app uses the machine's own name, such as `ip-172-31-35-201.ec2.internal` on EC2. That usually isn't on the certificate, so creating an agent fails with "certificate verify failed: Hostname mismatch", and so do AI Toolkit's skills and template syncs in `mlspl.log`. To set it:
+   1. Find the certificate's name:
+      ```
+      echo | openssl s_client -connect localhost:8089 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName
+      ```
+   2. Put it in `$SPLUNK_HOME/etc/apps/splunk_cloud_connect/local/aitk_local.conf`, owned by the Splunk user:
+      ```
+      [runtime]
+      advertised_host = <a DNS name from the certificate>
+      ```
+   3. Make sure the search head can resolve that name to itself, with `getent hosts <name>`. If it can't, add the name to `/etc/hosts`.
+
+   `local/` survives upgrades, but a reinstall drops it unless you restore it.
+4. **Restart splunkd.** The app has no setup page, and Splunk Web won't ask for one.
+5. **Check the install.** As an admin, run:
    ```
    curl -sk -u admin "https://localhost:8089/services/aitk_local/diagnostics?output_mode=json"
    ```
