@@ -80,8 +80,21 @@ This app implements the agent runtime API that AI Toolkit 6.2.0 calls, as descri
 
 ## Known issue in AI Toolkit 6.2.0
 
-Launchpad sometimes fails a chat message with "Conversation search id was not returned", or the agent list fails to load. When this happens, splunkd logs `unexpected data received (73)` for AI Toolkit's own `/mltk/agent_converse` handler. Stray output from that handler's process corrupts the reply.
+Launchpad sometimes fails a chat message with "Conversation search id was not returned", or the agent list fails to load. When this happens, splunkd logs `unexpected data received (73)` for AI Toolkit's own `/mltk/agent_converse` handler. Replies to creating or deleting an agent through AI Toolkit's agents API can fail the same way; the change still goes through, so check the agent list before trying again. Without the workaround below, expect roughly 2 to 4 failures in 10, whether this app is installed or not. Sending the message again works. When it hits an approval decision, the decision isn't lost: no run is submitted twice. `| aiagent` isn't affected.
 
-The same corruption can hit replies to creating or deleting an agent through AI Toolkit's agents API, seen in the 0.11.0 acceptance run. The change still goes through, so check the agent list before trying again.
+**Cause.** AI Toolkit's `bin/agent_manager/agent_manager.py` (line 96) turns on Python's HTTP debug output (`http.client.HTTPConnection.debuglevel = 1`) for its whole REST handler process. Each HTTP call AI Toolkit makes there then prints `send: ...`, `reply: ...` and `header: ...` lines, including the user's `Authorization` header, to stdout. In a splunkd persistent REST handler, stdout is the pipe splunkd reads replies from, so splunkd rejects some replies. The 73 is the byte 0x73, the "s" of "send:". splunkd discards the rejected text and returns only its own error, and a check of a test search head found no session key in any log, search artifact or index.
 
-This happens at the same rate with this app disabled, about 2 to 3 messages in 10. Sending the message again works. When it hits an approval decision, the decision isn't lost: no run is submitted twice. `| aiagent` isn't affected.
+**Workaround.** [`tools/http_debug_guard.py`](../tools/http_debug_guard.py) installs a small startup hook into Splunk's own Python 3.13 that throws away those debug prints, in persistent REST workers only. It doesn't change AI Toolkit's files or any other Python process. On a test search head it took chat failures from 21 in 50 to 0 in 50. Copy the script to the search head and run, as root or the user splunkd runs as:
+
+```
+sudo python3 http_debug_guard.py install
+sudo systemctl restart Splunkd      # or $SPLUNK_HOME/bin/splunk restart, if splunkd isn't run by systemd
+sudo python3 http_debug_guard.py status
+```
+
+`status` should say the hook is installed and active. The restart matters: splunkd keeps REST workers running for hours, and only workers started after the install have the hook.
+
+The hook lives in `$SPLUNK_HOME/lib/python3.13/site-packages`, not in an app, so:
+
+- **After a Splunk upgrade,** run `status`; if the upgrade removed the hook, run `install` again and restart.
+- **To remove it,** run `uninstall` and restart. Do this once AI Toolkit ships a version without the debug switch.
