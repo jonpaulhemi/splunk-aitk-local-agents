@@ -1,0 +1,11 @@
+<dashboard version="1.1" script="instance_role_connections.js" stylesheet="instance_role_connections.css" hideEdit="true" hideExport="true">
+  <label>Instance-role connections</label>
+  <description>Bedrock models and knowledge bases that use this search head's EC2 instance profile and a role ARN, with no access keys. Admins only.</description>
+  <row>
+    <panel>
+      <html>
+        <div id="irc-app">Loading…</div>
+      </html>
+    </panel>
+  </row>
+</dashboard>

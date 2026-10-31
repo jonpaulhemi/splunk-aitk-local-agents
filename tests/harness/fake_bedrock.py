@@ -32,6 +32,13 @@ class FakeBedrock:
         self.retrieve_script = lambda kb_id, request: []
         self.retrieve_calls = []  # {"kb_id", "key_id", "region", "session_token", "body"}
         self.reject_key_ids = set()  # answered like an invalid security token
+        # Bedrock's control plane (ListFoundationModels, ListInferenceProfiles), at AWS_ENDPOINT_URL_BEDROCK
+        self.foundation_models = [{"modelId": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+                                   "modelName": "Claude 3.5 Sonnet", "providerName": "Anthropic"}]
+        self.inference_profiles = [{"inferenceProfileId": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+                                    "inferenceProfileName": "US Claude 3.5 Sonnet"}]
+        self.list_error = None  # (status, error_type, message) to refuse listing
+        self.list_calls = []  # {"path", "key_id", "region", "session_token"}
         self.delay = 0.0  # seconds before each Converse answer
         self._lock = threading.Lock()
         self._server = None
@@ -48,6 +55,22 @@ class FakeBedrock:
 
             def log_message(self, *args):
                 pass
+
+            def do_GET(self):
+                key_id, region, _ = _scope(self.headers.get("Authorization", ""))
+                path = urllib.parse.urlsplit(self.path).path
+                with fake._lock:
+                    fake.list_calls.append({"path": path, "key_id": key_id, "region": region,
+                                            "session_token": self.headers.get("X-Amz-Security-Token")})
+                if fake.list_error:
+                    return self._error(*fake.list_error)
+                if path == "/foundation-models":
+                    return self._send(200, "application/json",
+                                      json.dumps({"modelSummaries": fake.foundation_models}))
+                if path == "/inference-profiles":
+                    return self._send(200, "application/json",
+                                      json.dumps({"inferenceProfileSummaries": fake.inference_profiles}))
+                return self._error(404, "UnknownOperationException", "unknown operation")
 
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))

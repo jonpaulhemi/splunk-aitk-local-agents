@@ -34,6 +34,27 @@ def call(rest_uri, token, method, path, postargs=None):
     return response.status, body
 
 
+def call_json(rest_uri, token, method, path, body=None):
+    """Make a REST call with a JSON body (as AI Toolkit's own REST API takes) and
+    return (status, parsed JSON or None)."""
+    try:
+        response, content = rest.simpleRequest(
+            f"{rest_uri}{path}",
+            sessionKey=token,
+            method=method,
+            jsonargs=None if body is None else json.dumps(body),
+            getargs={"output_mode": "json"},
+            raiseAllErrors=False,
+        )
+    except RESTException as e:
+        return e.statusCode, None
+    try:
+        parsed = json.loads(content) if content else None
+    except ValueError:
+        parsed = None
+    return response.status, parsed
+
+
 def capabilities(rest_uri, token):
     status, body = call(rest_uri, token, "GET", "/services/authentication/current-context")
     if status != 200:

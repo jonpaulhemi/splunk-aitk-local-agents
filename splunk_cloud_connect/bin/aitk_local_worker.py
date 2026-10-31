@@ -15,9 +15,10 @@ from aitk_local import bundled
 
 bundled.activate()  # before anything else imports a library lib/ also ships
 
-from aitk_local import diagnostics, entry, runtime
+from aitk_local import connections, diagnostics, entry, runtime
 
-HANDLERS = {"runtime": runtime.handle, "diagnostics": diagnostics.handle}
+HANDLERS = {"runtime": runtime.handle, "diagnostics": diagnostics.handle,
+            "connections": connections.handle}
 
 
 def main():

@@ -97,5 +97,7 @@ def aitk(splunk_home):
         agent_manager=importlib.import_module("agent_manager.agent_manager"),
         agent_status=importlib.import_module("processors.AgentStatusProcessor"),
         ai_agent=importlib.import_module("processors.AiAgentProcessor"),
+        llm_config_manager=importlib.import_module("connection_config_manager.llm.config_manager"),
+        vector_db_config_manager=importlib.import_module("connection_config_manager.vector_db.config_manager"),
     )
 

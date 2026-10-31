@@ -1,3 +1,7 @@
 []
 access = read : [ * ], write : [ admin ]
 export = none
+
+# The instance-role connections setup page: admins only (its endpoint checks admin_all_objects too).
+[views/instance_role_connections]
+access = read : [ admin, sc_admin ], write : [ admin, sc_admin ]

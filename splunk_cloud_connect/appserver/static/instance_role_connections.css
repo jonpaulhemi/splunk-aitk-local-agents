@@ -1,0 +1,14 @@
+#irc-app { max-width: 1100px; font-size: 14px; }
+#irc-app h2 { margin: 24px 0 8px; }
+#irc-app table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+#irc-app th, #irc-app td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
+#irc-app .irc-arn { font-family: monospace; font-size: 12px; word-break: break-all; }
+#irc-app form { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px 12px; align-items: center;
+                max-width: 760px; padding: 12px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 16px; }
+#irc-app form input, #irc-app form textarea { width: 100%; box-sizing: border-box; }
+#irc-app form .irc-buttons { grid-column: 2; display: flex; gap: 8px; flex-wrap: wrap; }
+#irc-app .irc-hint { grid-column: 2; color: #666; font-size: 12px; margin-top: -4px; }
+#irc-app .irc-result { grid-column: 1 / -1; padding: 8px; border-radius: 4px; }
+#irc-app .irc-ok { background: #e6f4ea; color: #1e4620; }
+#irc-app .irc-fail { background: #fdecea; color: #611a15; }
+#irc-app .irc-note { color: #555; margin: 4px 0 12px; }
