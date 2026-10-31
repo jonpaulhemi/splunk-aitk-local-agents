@@ -23,6 +23,12 @@ pip install splunk-appinspect
 splunk-appinspect inspect dist/splunk_cloud_connect-<version>.tgz --mode precert
 ```
 
+## Results (0.13.0)
+
+AppInspect 4.4.0, run on 2026-10-31. The app's own code and config have no failures. The two known library failures are unchanged: 40 x86_64-only compiled libraries, and botocore's UDP client-side monitoring (both explained under 0.10.1 below). numpy's Python analysis still runs out of memory, as before.
+
+0.13.0 adds a new conf, `aitk_local_connections.conf`, which is the registry of instance-role connections. It gets the same reload trigger and search head cluster replication as `aitk_local.conf`. The new setup page adds one warning, `check_for_splunk_js`. This is only a telemetry notice, and it needs no change.
+
 ## Results (0.10.1)
 
 The app's own code and config have no failures.
