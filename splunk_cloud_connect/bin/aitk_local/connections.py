@@ -98,19 +98,23 @@ def _common(fields):
     name = str(fields.get("name") or "").strip()
     if not name:
         raise _Refused(400, "The connection needs a name")
-    if not NAME.fullmatch(name):
+    if not NAME.fullmatch(name) or len(_full_name(name)) > 100:
         raise _Refused(400, "The name must start with a letter or underscore and contain only letters, digits "
-                            "and underscores")
+                            "and underscores, up to 100 characters")
     region = str(fields.get("region") or "").strip()
     if not region:
         raise _Refused(400, "The connection needs a region")
     if not REGION.fullmatch(region):
         raise _Refused(400, f"'{region}' isn't an AWS region name such as us-east-1")
+    return {"name": _full_name(name), "region": region, "role_arn": _role_arn(fields),
+            "description": str(fields.get("description") or "").strip()}
+
+
+def _role_arn(fields):
     role_arn = str(fields.get("role_arn") or "").strip()
     if not ROLE_ARN.fullmatch(role_arn):
         raise _Refused(400, "The role ARN must look like arn:<partition>:iam::<12-digit account>:role/<name>")
-    return {"name": _full_name(name), "region": region, "role_arn": role_arn,
-            "description": str(fields.get("description") or "").strip()}
+    return role_arn
 
 
 def _number(fields, key, kind, default, low, high):
@@ -146,11 +150,10 @@ def _role_credentials(fields):
                                  "and the instance profile's sts:AssumeRole permission."}
 
 
-def _bedrock_refused(fields, e, what):
+def _bedrock_refused(fields, e, what, check):
     code = aws_credentials.reason(e)
     return {"ok": False, "step": "bedrock", "code": code,
-            "message": f"Assumed role {fields['role_arn']}, but {what} ({code}). Check the role's Bedrock "
-                       "permissions" + (" and model access." if what.startswith("Bedrock refused") else ".")}
+            "message": f"Assumed role {fields['role_arn']}, but {what} ({code}). Check {check}."}
 
 
 class _ModelKind:
@@ -182,7 +185,7 @@ class _ModelKind:
             client.converse(modelId=fields["model"], messages=[{"role": "user", "content": [{"text": "Hi"}]}],
                             inferenceConfig={"maxTokens": 1})
         except Exception as e:
-            return _bedrock_refused(fields, e, "Bedrock refused the call")
+            return _bedrock_refused(fields, e, "Bedrock refused the call", "the role's Bedrock permissions and model access")
         return {"ok": True, "message": f"Assumed role {fields['role_arn']} and Bedrock answered"}
 
     def aitk_body(self, fields):
@@ -194,12 +197,6 @@ class _ModelKind:
                                    "request_timeout": fields["request_timeout"]},
             "llm_params": {"response_variability": fields["temperature"], "max_tokens": fields["max_tokens"]},
         }
-
-    def aitk_create(self, ctx, body):
-        return ctx.aitk("POST", self.aitk, body)
-
-    def aitk_update(self, ctx, body):
-        return ctx.aitk("PUT", self.aitk, body)
 
     def listed(self, stanza, content):
         return {"name": stanza, "region": content.get("region"), "role_arn": content.get("role_arn"),
@@ -240,7 +237,7 @@ class _KnowledgeBaseKind:
             client.retrieve(knowledgeBaseId=fields["kb_id"], retrievalQuery={"text": "connection test"},
                             retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": 1}})
         except Exception as e:
-            return _bedrock_refused(fields, e, "the knowledge base search failed")
+            return _bedrock_refused(fields, e, "the knowledge base search failed", "the role's Bedrock permissions")
         return {"ok": True, "message": f"Assumed role {fields['role_arn']} and searched knowledge base "
                                        f"{fields['kb_id']}"}
 
@@ -248,12 +245,6 @@ class _KnowledgeBaseKind:
         return {"name": fields["name"], "type": "AWS_KB", "description": fields["description"],
                 "details": {"aws_region": fields["region"], "kb_id": fields["kb_id"], "aws_access_key_id": None,
                             "aws_access_key_token": None, "role_arn": fields["role_arn"]}}
-
-    def aitk_create(self, ctx, body):
-        return ctx.aitk("POST", self.aitk, body)
-
-    def aitk_update(self, ctx, body):
-        return ctx.aitk("PUT", self.aitk, body)
 
     def listed(self, stanza, content):
         return {"name": stanza, "region": content.get("region"), "role_arn": content.get("role_arn"),
@@ -322,10 +313,16 @@ class _Context:
             return _reply(422, {"message": test["message"], "test": test})
         body = kind.aitk_body(checked)
         if existing is None:
-            kind.aitk_create(self, body)
-            self._registry_write(None, {"name": checked["name"], "kind": kind.path, **kind.registry_fields(checked)})
+            self.aitk("POST", kind.aitk, body)
+            try:
+                self._registry_write(None, {"name": checked["name"], "kind": kind.path,
+                                            **kind.registry_fields(checked)})
+            except splunkd.SplunkdError:
+                # Without its registry entry this endpoint could never edit or delete it: undo.
+                self.aitk("DELETE", kind.aitk, name=checked["name"])
+                raise
         else:
-            kind.aitk_update(self, body)
+            self.aitk("PUT", kind.aitk, body)
             self._registry_write(checked["name"], kind.registry_fields(checked))
         log.get_logger().info("%s %s instance-role connection %s (role %s, test %s)", self.user,
                               "created" if existing is None else "updated", checked["name"], checked["role_arn"],
@@ -351,11 +348,10 @@ class _Context:
 
 def _available_models(fields):
     """Foundation models and inference profiles the role can see in the region."""
-    checked = {"region": str(fields.get("region") or "").strip(), "role_arn": str(fields.get("role_arn") or "").strip()}
+    checked = {"region": str(fields.get("region") or "").strip()}
     if not REGION.fullmatch(checked["region"]):
         raise _Refused(400, "Pick a region first")
-    if not ROLE_ARN.fullmatch(checked["role_arn"]):
-        raise _Refused(400, "The role ARN must look like arn:<partition>:iam::<12-digit account>:role/<name>")
+    checked["role_arn"] = _role_arn(fields)
     credentials, failed = _role_credentials(checked)
     if failed:
         return {"models": [], "message": failed["message"] + " Type the model ID instead."}

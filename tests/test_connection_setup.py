@@ -131,14 +131,14 @@ def test_a_govcloud_or_c2s_role_arn_is_accepted(splunkd, admin, aws, imds):
         assert response.status_code == 201, response.text
 
 
-@pytest.mark.parametrize("name", ["glm 5", "5glm", "glm-5", "glm(5)"])
+@pytest.mark.parametrize("name", ["glm 5", "5glm", "glm-5", "glm(5)", "g" * 90])
 def test_a_name_ai_toolkit_wouldnt_accept_is_rejected(aitk, splunkd, admin, aws, imds, name):
     # AI Toolkit's own forms allow only these names, and its secret lookups break on others.
     response = _call(splunkd, admin, "POST", "/models", {**GLM, "name": name})
 
     assert response.status_code == 400
     assert response.json()["message"] == ("The name must start with a letter or underscore and contain only "
-                                          "letters, digits and underscores")
+                                          "letters, digits and underscores, up to 100 characters")
 
 
 @pytest.mark.parametrize("field", ["name", "region", "model"])

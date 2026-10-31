@@ -14,7 +14,7 @@ require(["jquery", "splunkjs/mvc", "splunkjs/mvc/simplexml/ready!"], function ($
                 { key: "name", label: "Name", hint: "Letters, digits and underscores. Saved with an _instance_role suffix." },
                 { key: "region", label: "Region", placeholder: "us-east-1" },
                 { key: "role_arn", label: "Role ARN", placeholder: "arn:aws:iam::123456789012:role/bedrock-invoke",
-                  hint: "The role in the Bedrock account. Its trust policy must name this search head's instance role." },
+                  hint: "The role in the Bedrock account. Its trust policy must name the role of this search head's instance profile." },
                 { key: "model", label: "Model ID", list: true, hint: "Use List models, or type the model or inference profile ID." },
                 { key: "temperature", label: "Temperature", type: "number", step: "0.1", value: "0" },
                 { key: "max_tokens", label: "Max tokens", type: "number", value: "4000" },

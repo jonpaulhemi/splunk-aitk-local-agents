@@ -76,13 +76,19 @@ def _instance_credentials():
             "aws_session_token": frozen.token}
 
 
-def _assumed(region, source, role_arn, config):
+def sts_client(region, source, config):
+    """STS on the connection region's own endpoint (never the global one, which
+    GovCloud and C2S don't have), whatever botocore's default."""
     import boto3
 
     session = boto3.Session(region_name=region, **source)
+    session._session.set_config_variable("sts_regional_endpoints", "regional")
+    return session.client("sts", config=config)
+
+
+def _assumed(region, source, role_arn, config):
     try:
-        found = session.client("sts", config=config).assume_role(RoleArn=role_arn,
-                                                                  RoleSessionName=ROLE_SESSION_NAME)
+        found = sts_client(region, source, config).assume_role(RoleArn=role_arn, RoleSessionName=ROLE_SESSION_NAME)
     except Exception as e:
         raise AssumeRoleFailed(role_arn, reason(e), e) from None
     return {

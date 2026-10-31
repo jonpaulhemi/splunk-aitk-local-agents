@@ -96,16 +96,17 @@ def _bedrock(block):
                                                      block.get("aws_access_token"), block.get("aws_role_arn"),
                                                      config)
     except aws_credentials.IncompleteKeys:
-        raise UnusableConnection("The Bedrock connection needs both an access key ID and a secret key, "
-                                 "or neither to use the instance role") from None
+        raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key") from None
     except aws_credentials.MissingRoleArn:
-        raise UnusableConnection("The Bedrock connection has no access keys, so it uses the instance role "
-                                 "and needs a role ARN") from None
+        raise UnusableConnection("The agent's Bedrock connection has no access keys, so it's an instance-role "
+                                 "connection and needs a role ARN") from None
     except aws_credentials.NoInstanceCredentials:
-        raise UnusableConnection("The Bedrock connection uses the instance role, but no instance credentials "
-                                 "were found: attach an instance profile and allow IMDSv2") from None
+        raise UnusableConnection("The agent's Bedrock connection is an instance-role connection, but no instance "
+                                 "credentials were found: attach an instance profile and allow IMDSv2") from None
     except aws_credentials.AssumeRoleFailed as e:
-        raise UnusableConnection(f"The Bedrock connection couldn't be used: {e}") from None
+        if block.get("aws_access_key_id"):
+            raise e.cause from None  # key-based: reported like any failed AWS call, as in 0.12.0
+        raise UnusableConnection(f"The agent's Bedrock connection couldn't be used: {e}") from None
     return ChatBedrockConverse(
         model=block["model"],
         region_name=region,

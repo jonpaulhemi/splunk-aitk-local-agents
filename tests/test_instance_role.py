@@ -79,7 +79,7 @@ def _run(aitk, splunkd, admin, agent, llm_block):
 # Bedrock models (#47)
 
 @pytest.mark.parametrize("missing", [None, ""])
-def test_a_keyless_model_connection_assumes_its_role_with_the_instance_credentials(aitk, splunkd, admin, agent,
+def test_a_model_connection_without_keys_assumes_its_role_with_the_instance_credentials(aitk, splunkd, admin, agent,
                                                                                    aws, imds, missing):
     aws.script = lambda request: "All quiet."
 
@@ -107,13 +107,13 @@ def test_aws_keys_in_splunkds_environment_never_stand_in_for_the_instance_role(a
     assert assumed["key_id"] == INSTANCE_KEY_ID
 
 
-def test_a_keyless_model_connection_without_a_role_arn_fails_before_calling_aws(aitk, splunkd, admin, agent, aws,
+def test_a_model_connection_without_keys_or_a_role_arn_fails_before_calling_aws(aitk, splunkd, admin, agent, aws,
                                                                                 imds):
     row = _run(aitk, splunkd, admin, agent, _model(aws_role_arn=None))
 
     assert row["status"] == "error"
-    assert row["error"] == ("The Bedrock connection has no access keys, so it uses the instance role "
-                            "and needs a role ARN")
+    assert row["error"] == ("The agent's Bedrock connection has no access keys, so it's an instance-role "
+                            "connection and needs a role ARN")
     assert aws.assume_role_calls == [] and aws.converse_calls == [] and imds.token_puts == 0
 
 
@@ -123,8 +123,8 @@ def test_no_instance_profile_is_a_clear_failure(aitk, splunkd, admin, agent, aws
     row = _run(aitk, splunkd, admin, agent, _model())
 
     assert row["status"] == "error"
-    assert row["error"] == ("The Bedrock connection uses the instance role, but no instance credentials were "
-                            "found: attach an instance profile and allow IMDSv2")
+    assert row["error"] == ("The agent's Bedrock connection is an instance-role connection, but no instance "
+                            "credentials were found: attach an instance profile and allow IMDSv2")
     assert aws.assume_role_calls == [] and aws.converse_calls == []
 
 
@@ -135,7 +135,7 @@ def test_a_refused_assume_role_names_the_role_and_the_aws_error_code(aitk, splun
     row = _run(aitk, splunkd, admin, agent, _model())
 
     assert row["status"] == "error"
-    assert row["error"] == (f"The Bedrock connection couldn't be used: assuming role {ROLE} failed "
+    assert row["error"] == (f"The agent's Bedrock connection couldn't be used: assuming role {ROLE} failed "
                             "(InvalidClientTokenId)")
     assert aws.converse_calls == []
     log = (splunk_home / "var" / "log" / "splunk" / "aitk_local.log").read_text()
@@ -163,6 +163,26 @@ def test_a_connection_with_keys_uses_them_even_on_an_instance_with_a_profile(ait
     assert imds.token_puts == 0
 
 
+@pytest.mark.parametrize("region, endpoint", [
+    ("us-east-1", "https://sts.us-east-1.amazonaws.com"),
+    ("us-gov-west-1", "https://sts.us-gov-west-1.amazonaws.com"),
+    ("us-iso-east-1", "https://sts.us-iso-east-1.c2s.ic.gov"),
+])
+def test_assume_role_goes_to_the_sts_endpoint_in_the_connections_region(splunk_home, monkeypatch, region, endpoint):
+    import sys
+
+    monkeypatch.delenv("AWS_ENDPOINT_URL_STS", raising=False)
+    monkeypatch.setenv("AWS_STS_REGIONAL_ENDPOINTS", "legacy")  # a host setting that would pick the global one
+    sys.path.insert(0, str(splunk_home / "etc" / "apps" / "splunk_cloud_connect" / "bin"))
+    from aitk_local import bundled
+
+    bundled.activate()
+    from aitk_local import aws_credentials
+
+    keys = {"aws_access_key_id": "ASIAX", "aws_secret_access_key": "x", "aws_session_token": "t"}
+    assert aws_credentials.sts_client(region, keys, None).meta.endpoint_url == endpoint
+
+
 # Knowledge bases (#48)
 
 def _kb(**details):
@@ -183,7 +203,7 @@ def _search(aitk, splunkd, admin, agent, llm, vector_dbs, tools=(TOOL,)):
 
 
 @pytest.mark.parametrize("missing", [None, ""])
-def test_a_keyless_knowledge_base_searches_as_its_role_assumed_with_the_instance_credentials(
+def test_a_knowledge_base_without_keys_searches_as_its_role_assumed_with_the_instance_credentials(
         aitk, splunkd, admin, agent, llm, aws, imds, missing):
     row = _search(aitk, splunkd, admin, agent, llm,
                   [_kb(aws_access_key_id=missing, aws_access_key_token=missing)])
@@ -211,11 +231,11 @@ def test_each_knowledge_base_assumes_its_own_role(aitk, splunkd, admin, agent, l
         ("EJGJR4SKJL", "us-west-2"), ("POLICY0001", "eu-west-1")]
 
 
-def test_a_keyless_knowledge_base_without_a_role_arn_is_a_tool_error(aitk, splunkd, admin, agent, llm, aws, imds):
+def test_a_knowledge_base_without_keys_or_a_role_arn_is_a_tool_error(aitk, splunkd, admin, agent, llm, aws, imds):
     row = _search(aitk, splunkd, admin, agent, llm, [_kb(role_arn="")])
 
-    assert row["result_1"] == ("Searched: The knowledge base connection has no access keys, so it uses the "
-                               "instance role and needs a role ARN")
+    assert row["result_1"] == ("Searched: Knowledge base EJGJR4SKJL has no access keys, so it's an "
+                               "instance-role connection and needs a role ARN")
     assert aws.assume_role_calls == [] and aws.retrieve_calls == [] and imds.token_puts == 0
 
 
@@ -225,8 +245,8 @@ def test_no_instance_profile_fails_the_run_naming_the_knowledge_base(aitk, splun
     row = _search(aitk, splunkd, admin, agent, llm, [RUNBOOKS])
 
     assert row["status"] == "error"
-    assert row["error"] == ("Knowledge base EJGJR4SKJL couldn't be used: it uses the instance role, but no "
-                            "instance credentials were found: attach an instance profile and allow IMDSv2")
+    assert row["error"] == ("Knowledge base EJGJR4SKJL couldn't be used: it's an instance-role connection, but "
+                            "no instance credentials were found: attach an instance profile and allow IMDSv2")
     assert aws.retrieve_calls == []
 
 
