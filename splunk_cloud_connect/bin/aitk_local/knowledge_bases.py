@@ -15,7 +15,7 @@ once when the run starts.
 import asyncio
 import re
 
-from aitk_local import config, llm, log
+from aitk_local import aws_credentials, config, log
 
 TYPE = "AWS_KB"
 TOOL_PREFIX = "search_knowledge_base_"
@@ -67,25 +67,23 @@ def _tool(kb_id, entry):
 
 def _client(kb_id, details, timeout):
     """A Bedrock Agent Runtime client for one knowledge base's connection, made
-    once per run; None if the connection lacks credentials, which are never
-    taken from the environment instead."""
-    region, key_id, secret = details.get("region"), details.get("aws_access_key_id"), details.get(
-        "aws_access_key_token")
-    if not (region and key_id and secret):
+    once per run; None if the connection lacks credentials."""
+    region = details.get("region")
+    if not region:
         return None
     import boto3
     from botocore.config import Config
 
     # Each search is bounded by the tool's own timeout; one retry for throttling.
     boto_config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 2})
-    credentials = {"aws_access_key_id": key_id, "aws_secret_access_key": secret, "aws_session_token": None}
-    role_arn = details.get("role_arn")
-    if role_arn:
-        try:
-            credentials = llm.assumed_role(region, key_id, secret, role_arn, boto_config)
-        except Exception as e:
-            raise Unusable(f"Knowledge base {kb_id} couldn't be used: assuming role {role_arn} failed "
-                           f"({_reason(e)})") from None
+    try:
+        credentials = aws_credentials.for_connection(region, details.get("aws_access_key_id"),
+                                                     details.get("aws_access_key_token"), details.get("role_arn"),
+                                                     boto_config)
+    except aws_credentials.MissingKeys:
+        return None
+    except aws_credentials.AssumeRoleFailed as e:
+        raise Unusable(f"Knowledge base {kb_id} couldn't be used: {e}") from None
     return boto3.client("bedrock-agent-runtime", region_name=region, config=boto_config, **credentials)
 
 
@@ -123,8 +121,4 @@ def _source(location):
 
 
 def _reason(e):
-    """The AWS error code, or the exception type: never the message, which can echo the request."""
-    aws = getattr(e, "response", None)
-    if isinstance(aws, dict) and aws.get("Error", {}).get("Code"):
-        return aws["Error"]["Code"]
-    return type(e).__name__
+    return aws_credentials.reason(e)
