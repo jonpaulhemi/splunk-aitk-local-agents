@@ -11,10 +11,16 @@ import pytest
 from harness.aitk import create_agent, run_aiagent
 from harness.fake_bedrock import ROLE_KEY_ID, ROLE_SESSION_TOKEN, FakeBedrock
 from harness.fake_imds import INSTANCE_KEY_ID, INSTANCE_SESSION_TOKEN, FakeIMDS
+from harness.fake_llm import FakeLLM, tool_call, tool_results
 
 MODEL = "anthropic.claude-3-5-sonnet-20240620-v1:0"
 ROLE = "arn:aws:iam::210987654321:role/bedrock-invoke"
 KEY_ID = "AKIAFAKEKEYPAIR00001"
+KB_ROLE = "arn:aws:iam::210987654321:role/kb-search"
+RUNBOOKS = {"type": "AWS_KB", "kb_id": "EJGJR4SKJL", "description": "On-call runbooks.",
+            "connection_details": {"region": "us-west-2", "aws_access_key_id": None,
+                                   "aws_access_key_token": None, "role_arn": KB_ROLE}}
+TOOL = "search_knowledge_base_EJGJR4SKJL"
 
 
 @pytest.fixture
@@ -40,6 +46,13 @@ def aws(monkeypatch):
 def imds(monkeypatch):
     server = FakeIMDS().start()
     monkeypatch.setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", server.url)
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def llm():
+    server = FakeLLM().start()
     yield server
     server.stop()
 
@@ -148,3 +161,82 @@ def test_a_connection_with_keys_uses_them_even_on_an_instance_with_a_profile(ait
     [assumed] = aws.assume_role_calls
     assert (assumed["key_id"], assumed["session_token"]) == (KEY_ID, None)
     assert imds.token_puts == 0
+
+
+# Knowledge bases (#48)
+
+def _kb(**details):
+    return {**RUNBOOKS, "connection_details": {**RUNBOOKS["connection_details"], **details}}
+
+
+def _search(aitk, splunkd, admin, agent, llm, vector_dbs, tools=(TOOL,)):
+    def script(request):
+        done = tool_results(request)
+        if len(done) < len(tools):
+            return tool_call(tools[len(done)], {"query": "disk alert"}, call_id=f"call_{len(done)}")
+        return f"Searched: {done[-1]}"
+    llm.script = script
+    block = {"llm": {"provider": "Custom", "model": "qwen3:4b", "api_key": "sk-fake", "api_base": f"{llm.url}/v1",
+                     "request_timeout": 30, "reasoning_effort": "NONE"}}
+    return run_aiagent(aitk, splunkd, admin, agent, block, "Who do I page?", [{"x": 1}], vector_dbs=vector_dbs,
+                       conversation_tool="true").iloc[0]
+
+
+@pytest.mark.parametrize("missing", [None, ""])
+def test_a_keyless_knowledge_base_searches_as_its_role_assumed_with_the_instance_credentials(
+        aitk, splunkd, admin, agent, llm, aws, imds, missing):
+    row = _search(aitk, splunkd, admin, agent, llm,
+                  [_kb(aws_access_key_id=missing, aws_access_key_token=missing)])
+
+    assert row["status"] == "success", row["error"]
+    [assumed] = aws.assume_role_calls
+    assert (assumed["key_id"], assumed["session_token"], assumed["region"], assumed["form"]["RoleArn"]) == (
+        INSTANCE_KEY_ID, INSTANCE_SESSION_TOKEN, "us-west-2", KB_ROLE)
+    [call] = aws.retrieve_calls
+    assert (call["kb_id"], call["key_id"], call["session_token"], call["region"]) == (
+        "EJGJR4SKJL", ROLE_KEY_ID, ROLE_SESSION_TOKEN, "us-west-2")
+
+
+def test_each_knowledge_base_assumes_its_own_role(aitk, splunkd, admin, agent, llm, aws, imds):
+    other_role = "arn:aws:iam::333333333333:role/policies-search"
+    policies = {**_kb(region="eu-west-1", role_arn=other_role), "kb_id": "POLICY0001"}
+
+    row = _search(aitk, splunkd, admin, agent, llm, [RUNBOOKS, policies],
+                  tools=(TOOL, "search_knowledge_base_POLICY0001"))
+
+    assert row["status"] == "success", row["error"]
+    assert sorted((c["form"]["RoleArn"], c["region"]) for c in aws.assume_role_calls) == [
+        (KB_ROLE, "us-west-2"), (other_role, "eu-west-1")]
+    assert [(c["kb_id"], c["region"]) for c in aws.retrieve_calls] == [
+        ("EJGJR4SKJL", "us-west-2"), ("POLICY0001", "eu-west-1")]
+
+
+def test_a_keyless_knowledge_base_without_a_role_arn_is_a_tool_error(aitk, splunkd, admin, agent, llm, aws, imds):
+    row = _search(aitk, splunkd, admin, agent, llm, [_kb(role_arn="")])
+
+    assert row["result_1"] == ("Searched: The knowledge base connection has no access keys, so it uses the "
+                               "instance role and needs a role ARN")
+    assert aws.assume_role_calls == [] and aws.retrieve_calls == [] and imds.token_puts == 0
+
+
+def test_no_instance_profile_fails_the_run_naming_the_knowledge_base(aitk, splunkd, admin, agent, llm, aws, imds):
+    imds.role = None
+
+    row = _search(aitk, splunkd, admin, agent, llm, [RUNBOOKS])
+
+    assert row["status"] == "error"
+    assert row["error"] == ("Knowledge base EJGJR4SKJL couldn't be used: it uses the instance role, but no "
+                            "instance credentials were found: attach an instance profile and allow IMDSv2")
+    assert aws.retrieve_calls == []
+
+
+def test_a_refused_assume_role_fails_the_run_naming_the_knowledge_base_role_and_code(aitk, splunkd, admin, agent,
+                                                                                     llm, aws, imds):
+    aws.reject_key_ids.add(INSTANCE_KEY_ID)
+
+    row = _search(aitk, splunkd, admin, agent, llm, [RUNBOOKS])
+
+    assert row["status"] == "error"
+    assert row["error"] == (f"Knowledge base EJGJR4SKJL couldn't be used: assuming role {KB_ROLE} failed "
+                            "(InvalidClientTokenId)")
+    assert aws.retrieve_calls == []

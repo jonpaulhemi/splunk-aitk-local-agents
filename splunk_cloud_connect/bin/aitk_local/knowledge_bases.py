@@ -9,7 +9,8 @@ by its description, which is all the model learns about it.
 A knowledge base search is Bedrock Agent Runtime's Retrieve: the best-matching
 chunks and where they came from, never a generated answer. The agent's own
 model does the writing. With a role_arn, searches run as that role, assumed
-once when the run starts.
+once when the run starts. An instance-role connection (null keys, a role_arn)
+assumes it with the EC2 instance profile's credentials.
 """
 
 import asyncio
@@ -46,11 +47,11 @@ def _tool(kb_id, entry):
     from langchain_core.tools import StructuredTool, ToolException
 
     chunks, timeout = config.chunks_per_search(), config.search_timeout_seconds()
-    client = _client(kb_id, entry.get("connection_details") or {}, timeout)
+    client, unusable = _client(kb_id, entry.get("connection_details") or {}, timeout)
 
     async def search(query: str) -> str:
         if client is None:
-            raise ToolException("The knowledge base connection needs a region, an access key ID and a secret key")
+            raise ToolException(unusable)
         try:
             results = await asyncio.wait_for(asyncio.to_thread(_search, client, kb_id, query, chunks),
                                              timeout=timeout)
@@ -66,11 +67,13 @@ def _tool(kb_id, entry):
 
 
 def _client(kb_id, details, timeout):
-    """A Bedrock Agent Runtime client for one knowledge base's connection, made
-    once per run; None if the connection lacks credentials."""
+    """(client, None) for one knowledge base's connection, made once per run, or
+    (None, why) when the connection is incomplete; each search then reports why.
+    Instance-role connections (no keys, a role ARN) assume the role with the
+    instance profile's credentials."""
     region = details.get("region")
     if not region:
-        return None
+        return None, "The knowledge base connection needs a region"
     import boto3
     from botocore.config import Config
 
@@ -80,11 +83,18 @@ def _client(kb_id, details, timeout):
         credentials = aws_credentials.for_connection(region, details.get("aws_access_key_id"),
                                                      details.get("aws_access_key_token"), details.get("role_arn"),
                                                      boto_config)
-    except (aws_credentials.IncompleteKeys, aws_credentials.MissingRoleArn):
-        return None
+    except aws_credentials.IncompleteKeys:
+        return None, ("The knowledge base connection needs both an access key ID and a secret key, "
+                      "or neither to use the instance role")
+    except aws_credentials.MissingRoleArn:
+        return None, ("The knowledge base connection has no access keys, so it uses the instance role "
+                      "and needs a role ARN")
+    except aws_credentials.NoInstanceCredentials:
+        raise Unusable(f"Knowledge base {kb_id} couldn't be used: it uses the instance role, but no instance "
+                       "credentials were found: attach an instance profile and allow IMDSv2") from None
     except aws_credentials.AssumeRoleFailed as e:
         raise Unusable(f"Knowledge base {kb_id} couldn't be used: {e}") from None
-    return boto3.client("bedrock-agent-runtime", region_name=region, config=boto_config, **credentials)
+    return boto3.client("bedrock-agent-runtime", region_name=region, config=boto_config, **credentials), None
 
 
 def _search(client, kb_id, query, chunks):
