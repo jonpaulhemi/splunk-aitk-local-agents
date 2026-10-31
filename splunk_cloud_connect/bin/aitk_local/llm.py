@@ -5,7 +5,8 @@ request_timeout and reasoning_effort:
 - a custom OpenAI-compatible connection: provider "Custom", api_key, and
   api_base (the endpoint minus /chat/completions)
 - a Bedrock connection: provider "Bedrock", aws_region, aws_access_key_id,
-  aws_access_token (the secret key) and aws_role_arn (optional)
+  aws_access_token (the secret key) and aws_role_arn (optional). An
+  instance-role connection has null keys and a role ARN.
 """
 
 import re
@@ -80,7 +81,7 @@ def _openai_compatible(block):
 def _bedrock(block):
     region = block.get("aws_region")
     if not region:
-        raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key")
+        raise UnusableConnection("The Bedrock connection needs a region")
     if not REGION.fullmatch(region):
         raise UnusableConnection(f"The Bedrock connection's region '{region}' isn't an AWS region name "
                                  "such as us-gov-west-1")
@@ -94,10 +95,17 @@ def _bedrock(block):
         credentials = aws_credentials.for_connection(region, block.get("aws_access_key_id"),
                                                      block.get("aws_access_token"), block.get("aws_role_arn"),
                                                      config)
-    except aws_credentials.MissingKeys:
-        raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key") from None
+    except aws_credentials.IncompleteKeys:
+        raise UnusableConnection("The Bedrock connection needs both an access key ID and a secret key, "
+                                 "or neither to use the instance role") from None
+    except aws_credentials.MissingRoleArn:
+        raise UnusableConnection("The Bedrock connection has no access keys, so it uses the instance role "
+                                 "and needs a role ARN") from None
+    except aws_credentials.NoInstanceCredentials:
+        raise UnusableConnection("The Bedrock connection uses the instance role, but no instance credentials "
+                                 "were found: attach an instance profile and allow IMDSv2") from None
     except aws_credentials.AssumeRoleFailed as e:
-        raise e.cause from None  # reported like any other failed AWS call
+        raise UnusableConnection(f"The Bedrock connection couldn't be used: {e}") from None
     return ChatBedrockConverse(
         model=block["model"],
         region_name=region,

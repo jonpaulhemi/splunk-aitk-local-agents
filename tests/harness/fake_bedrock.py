@@ -28,7 +28,7 @@ class FakeBedrock:
     def __init__(self):
         self.script = lambda request: "ok"
         self.converse_calls = []  # {"model", "key_id", "region", "session_token", "body"}
-        self.assume_role_calls = []  # {"key_id", "region", "form"}
+        self.assume_role_calls = []  # {"key_id", "region", "form", "session_token"}
         self.retrieve_script = lambda kb_id, request: []
         self.retrieve_calls = []  # {"kb_id", "key_id", "region", "session_token", "body"}
         self.reject_key_ids = set()  # answered like an invalid security token
@@ -61,7 +61,8 @@ class FakeBedrock:
                 if service == "sts":
                     form = dict(urllib.parse.parse_qsl(raw.decode()))
                     with fake._lock:
-                        fake.assume_role_calls.append({"key_id": key_id, "region": region, "form": form})
+                        fake.assume_role_calls.append({"key_id": key_id, "region": region, "form": form,
+                                                       "session_token": self.headers.get("X-Amz-Security-Token")})
                     return self._send(200, "text/xml", _assume_role_xml())
                 retrieve = re.fullmatch(r"/knowledgebases/([^/]+)/retrieve", self.path)
                 if retrieve:

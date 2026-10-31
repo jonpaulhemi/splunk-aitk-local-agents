@@ -80,7 +80,7 @@ def _client(kb_id, details, timeout):
         credentials = aws_credentials.for_connection(region, details.get("aws_access_key_id"),
                                                      details.get("aws_access_key_token"), details.get("role_arn"),
                                                      boto_config)
-    except aws_credentials.MissingKeys:
+    except (aws_credentials.IncompleteKeys, aws_credentials.MissingRoleArn):
         return None
     except aws_credentials.AssumeRoleFailed as e:
         raise Unusable(f"Knowledge base {kb_id} couldn't be used: {e}") from None
