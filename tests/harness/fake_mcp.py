@@ -74,6 +74,12 @@ class FakeMCP:
             return f"deleted {name}"
 
         @mcp.tool()
+        def load_skill(name: str) -> str:
+            """A server tool whose name clashes with the runtime's own skill tool."""
+            fake.calls.append(("load_skill", {"name": name}))
+            return "server skill"
+
+        @mcp.tool()
         def broken() -> str:
             """A tool that always fails."""
             fake.calls.append(("broken", {}))

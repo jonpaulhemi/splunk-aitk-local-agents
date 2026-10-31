@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.12.0
+
+Skills and AWS knowledge bases. The acceptance and no-cloud-traffic reports are in [`docs/releases/0.12.0/`](releases/0.12.0/).
+
+- **Skills:** the skills attached to an agent in AI Toolkit now work. The agent sees each skill's name and description and loads a skill's full instructions with `load_skill` when the task matches. Loads show in Run History and in the "Loaded skills" panel on the reply where they happened. Splunk-managed skills aren't available offline, since their catalog comes from Splunk's cloud.
+- **Knowledge bases:** each AWS KB knowledge base attached to an agent is a search tool, `search_knowledge_base_<kb id>`, described by the connection's description. A search returns the best-matching chunks (5 by default, `[knowledge_base] chunks_per_search`) with their sources and scores, through Bedrock Agent Runtime's Retrieve. The agent writes the answer itself. Searches run as the connection's IAM role, assumed once per run. A role that can't be assumed fails the run with a message naming the role and the AWS error code. A failed or slow search (30 seconds, `[knowledge_base] search_timeout_seconds`) comes back to the agent as a tool error.
+- **Egress:** knowledge base searches go to `bedrock-agent-runtime.<region>.amazonaws.com` (and STS for the role). Still no Splunk cloud traffic.
+- **No-cloud-traffic check:** Splunk's platform telemetry (`quickdraw.splunk.com`, `telemetry-splkmobile.dataeng.splunk.com`) now fails the check instead of being listed as an exception. So does splunkd's Splunkbase app catalog download (`cdn.splunkbase.splunk.com`). Before a release capture, turn off **Settings > Instrumentation** and set `[applicationsManagement] allowInternetAccess = false` in server.conf. Setup changes neither, since both are server-wide; see `docs/install.md`.
+- **New:** [`knowledge-base-setup.md`](knowledge-base-setup.md), a guide to making a small knowledge base for trying this out. The acceptance run gains a skills check, and a knowledge base check with `--knowledge-base`.
+
+**Known issues**
+- **AI Toolkit 6.2.0 "unexpected data received (73)":** still AI Toolkit's own, but now with a cause and a workaround. [`tools/http_debug_guard.py`](../tools/http_debug_guard.py) stops the HTTP debug output that corrupts AI Toolkit's REST replies; see "Known issue in AI Toolkit 6.2.0" in `docs/install.md`.
+- **AI Toolkit's Test connection for knowledge bases** uses the access key directly and ignores the role ARN, so a connection can pass it and still fail an agent run if the key can't assume the role.
+- **Knowledge base types:** only unstructured vector-store knowledge bases are supported. AI Toolkit's connection form can't save Bedrock Managed ones, because its test uses vector search settings they reject, and structured data stores (SQL) aren't supported.
+- **Long-term memory** (across sessions) isn't supported. AI Toolkit's invoke doesn't say which user is chatting, so a memory per agent would be shared by everyone who uses it.
+- The 0.11.0 known issues below still apply.
+
 ## 0.11.0
 
 This is the first release checked end to end on a real search head. The acceptance and no-cloud-traffic reports go in `docs/releases/0.11.0/` once that run passes.

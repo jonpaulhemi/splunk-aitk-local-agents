@@ -10,9 +10,11 @@ it with Ctrl-C (or give --seconds):
 It captures with tcpdump on every interface, then reports each DNS name
 looked up, each TLS server name or proxy CONNECT host, and each new outbound
 connection. It fails if any name belongs to Splunk's cloud (Splunk Cloud
-Services, Cloud Connect, AI Toolkit telemetry). Splunk's platform telemetry is listed
-under platform_telemetry but doesn't fail it. The other names should be only your LLM
-and MCP hosts.
+Services, Cloud Connect, AI Toolkit telemetry, and Splunk's own platform
+telemetry and Splunkbase, so turn off Settings > Instrumentation and
+[applicationsManagement] allowInternetAccess before a run). The other
+names should be only your LLM, knowledge base
+(bedrock-agent-runtime.<region>.amazonaws.com) and MCP hosts.
 
 Loopback traffic isn't captured, and only each packet's first 1600 bytes are
 kept. That is enough for headers and TLS ClientHellos, but anything sent
@@ -36,11 +38,6 @@ import time
 # telemetry (quickdraw), Splunk Cloud (incl. GovCloud) and the mobile/telemetry
 # endpoints.
 SPLUNK_CLOUD_DOMAINS = ("splunk.com", "splunkcloud.com", "splunkcloudgc.com", "splkmobile.com", "splunkbeta.com")
-
-# Splunk's platform telemetry (the splunk_instrumentation app). It's a
-# server-wide admin setting, not AI Toolkit's or this app's traffic, so it's
-# listed but doesn't fail the check.
-PLATFORM_TELEMETRY = ("quickdraw.splunk.com",)
 
 ETHERNET, LINUX_SLL, LINUX_SLL2 = 1, 113, 276
 RAW_IP = (101, 12, 228, 229)
@@ -89,12 +86,11 @@ def summarize(pcap_path, local_addresses=()):
             if name:
                 names.add(name)
                 named_ips.add(_address(dst, dport))
-    telemetry = sorted(n for n in names if n.rstrip(".") in PLATFORM_TELEMETRY)
-    cloud = sorted(n for n in names if is_splunk_cloud(n) and n not in telemetry)
+    cloud = sorted(n for n in names if is_splunk_cloud(n))
     # A connection whose name wasn't seen (no TLS, or a ClientHello the capture
     # cut short) could be anything, so it's listed for a person to look at.
     unnamed = sorted(c for c in connections if c not in named_ips and not c.endswith("/udp"))
-    return {"pass": not cloud, "splunk_cloud": cloud, "platform_telemetry": telemetry, "names": sorted(names), "connections": sorted(connections),
+    return {"pass": not cloud, "splunk_cloud": cloud, "names": sorted(names), "connections": sorted(connections),
             "connections_without_a_name": unnamed}
 
 

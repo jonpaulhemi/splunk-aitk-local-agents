@@ -15,8 +15,8 @@ Run AI Toolkit 6.2.0 Agent Launchpad agents on a Splunk Enterprise search head *
 4. **Approvals (HITL)** use LangGraph `interrupt()`, with checkpoints in SQLite on the search head. A KV-store checkpointer comes later if you move to a cluster.
 5. **Config overrides in `local/`:** disable the SLIM template/skill sync inputs and the five `outputtelemetry` saved searches, and optionally narrow `[ai:AllowedDomains]` (in 6.2.0 it only gates MCP server URLs, not LLM endpoints). These must be applied to `Splunk_ML_Toolkit/local/` or done through REST at setup (the admin-only `POST /services/aitk_local/offline_setup` action, #17), since one app can't override another app's `local/` from its own `default/`.
 
-## v1 scope
-In: MCP tools, structured output, HITL approvals, memory within a session. Out: skills, knowledge bases, long-term memory, CDTSM forecasting, SageMaker/Vertex.
+## Scope
+In: MCP tools, structured output, HITL approvals, memory within a session (0.11.0); skills and AWS knowledge bases (0.12.0, spec #37). Out: long-term memory, because AI Toolkit's invoke doesn't identify the chatting user, so a store keyed by the agent's `memory_id` would share one memory across all its users; Splunk-managed skills (their catalog syncs from Splunk's cloud); CDTSM forecasting; SageMaker/Vertex.
 
 ## Platform
 Single search head, Linux x86_64, Splunk's Python 3.13. Dependencies bundled under `lib/`, built for cp313 manylinux. splunkd uses an org-CA cert that the OS trust store trusts, so AI Toolkit's certifi + OS-store check passes.

@@ -21,6 +21,8 @@ Agents do **not** run inside Splunk. AI Toolkit stores the agent definition in K
 
 Invoke body is encrypted: payload → Fernet key from PBKDF2-SHA256(token, salt, 100k iters); salt RSA-OAEP-SHA256 encrypted with the public key from `/encryption/public-key`. Whoever serves the public key and the token can decrypt it. Decrypted payload keys: `system_prompt, task_prompt, session_id, runtime_id, memory_id, version, agent_timeout, skills, structured_output?, hitl_response?` plus the MCP, KB and LLM config blocks.
 
+Skills and knowledge bases (0.12.0, spec #37): `skills` arrives already resolved by AI Toolkit as `[{name, description, skill_text}]`. `knowledge_bases` is `{"vector_dbs": [{type: "AWS_KB", description, kb_id, connection_details: {region, aws_access_key_id, aws_access_key_token, role_arn}}]}`, where `aws_access_key_token` is the secret key, and `{"vector_dbs": []}` when nothing is attached. There is no knowledge base name. The completed chunk's `skills` is read by Launchpad's "Loaded skills" panel as a list of `{name}` objects, and trace items with `type: "skill"` are shown as skills.
+
 TLS: AI Toolkit verifies the endpoint with certifi plus the OS trust store (`util/agent_ssl_context.py`), so a local endpoint needs a cert chained to a CA in one of those.
 
 ## The UI

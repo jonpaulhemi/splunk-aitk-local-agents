@@ -24,13 +24,26 @@ Run this once as an admin after installing. It turns off AI Toolkit's own cloud 
 curl -sk -u admin -X POST "https://localhost:8089/services/aitk_local/offline_setup?output_mode=json"
 ```
 
-Setup doesn't change Splunk's own platform telemetry, which sends usage data to `quickdraw.splunk.com`. That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation**. The no-cloud-traffic check in [`docs/release.md`](release.md) lists this traffic but doesn't fail on it.
+Setup doesn't change Splunk's own platform telemetry, which sends usage data to Splunk (seen: `quickdraw.splunk.com`, `telemetry-splkmobile.dataeng.splunk.com`). That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation** and turn off every kind of sharing, or set `sendAnonymizedUsage`, `sendSupportUsage`, `sendLicenseUsage` and `sendAnonymizedWebAnalytics` to false through `/servicesNS/nobody/splunk_instrumentation/admin/telemetry/general`, then restart. The no-cloud-traffic check in [`docs/release.md`](release.md) fails on this traffic like any other Splunk cloud traffic.
+
+splunkd's app manager also reaches Splunkbase on its own schedule, to download the app catalog from `cdn.splunkbase.splunk.com` and check `apps.splunk.com` for app updates. Setup doesn't change this either, since it's a server-wide setting. To turn it off, add this to `$SPLUNK_HOME/etc/system/local/server.conf` and restart:
+
+```
+[applicationsManagement]
+allowInternetAccess = false
+```
+
+Splunk Web can then no longer browse or install apps from Splunkbase; install them from a file instead.
 
 To also set AI Toolkit's MCP domain allowlist, add `-d allowed_domains=...`. The README explains what that list does and doesn't cover.
 
 Next, set up connections and agents in AI Toolkit as usual:
 - an LLM connection, either Custom (OpenAI-compatible) or Bedrock
 - MCP connections, marking tools as requiring approval where needed
+- skills, if your agents use them; Splunk-managed skills aren't available offline, since their catalog comes from Splunk's cloud
+- knowledge base connections (AWS KB), if your agents search one; [knowledge-base-setup.md](knowledge-base-setup.md) walks through creating a small one
+  - searches go to AWS Bedrock Agent Runtime (`bedrock-agent-runtime.<region>.amazonaws.com`), plus STS when the connection has a role; that's AWS traffic, not Splunk cloud
+  - searches run as the connection's role ARN, assumed with its access key when each run starts; AI Toolkit's own **Test connection** uses the access key directly and ignores the role, so a connection can pass that test and still fail an agent run if the key can't assume the role. The run's error names the role and the AWS error code.
 - agents in Agent Launchpad
 
 ## Upgrading this app

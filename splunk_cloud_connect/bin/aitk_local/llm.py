@@ -94,7 +94,7 @@ def _bedrock(block):
     config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 2})
     credentials = {"aws_access_key_id": key_id, "aws_secret_access_key": secret, "aws_session_token": None}
     if block.get("aws_role_arn"):
-        credentials = _assumed_role(region, key_id, secret, block["aws_role_arn"], config)
+        credentials = assumed_role(region, key_id, secret, block["aws_role_arn"], config)
     return ChatBedrockConverse(
         model=block["model"],
         region_name=region,
@@ -105,7 +105,7 @@ def _bedrock(block):
     )
 
 
-def _assumed_role(region, key_id, secret, role_arn, config):
+def assumed_role(region, key_id, secret, role_arn, config):
     """Temporary credentials for `role_arn`, as AI Toolkit gets them for its own Bedrock calls."""
     import boto3
 
