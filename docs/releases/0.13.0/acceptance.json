@@ -1,0 +1,177 @@
+{
+  "started_at": "2026-10-31T18:30:57Z",
+  "duration_s": 505.8,
+  "search_head": "splunk-aws-internal.0bn0x.com",
+  "templates": {
+    "openai": null,
+    "bedrock": "aitk_live_0130_bedrock",
+    "approval": "derived from Bedrock template with MCP approval required",
+    "feature_checks": "aitk_live_0130_bedrock",
+    "knowledge_base": "runbooks_instance_role"
+  },
+  "instance_role": true,
+  "pass": true,
+  "partial_coverage": true,
+  "adaptations": [
+    "OpenAI connection tests skipped by user request.",
+    "Structured output, skills, and KB use the Bedrock template.",
+    "Approval agent derived from Bedrock template with MCP approval enabled.",
+    "Created agents and skills grant admin read/write with app sharing.",
+    "Stop on first failed check, then clean up."
+  ],
+  "checks": {
+    "create_openai": {
+      "pass": true,
+      "skipped": "User verified OpenAI connection separately and requested skip.",
+      "seconds": 0
+    },
+    "openai_answer": {
+      "pass": true,
+      "skipped": "User verified OpenAI connection separately and requested skip.",
+      "seconds": 0
+    },
+    "openai_mcp_tool": {
+      "pass": true,
+      "skipped": "User verified OpenAI connection separately and requested skip.",
+      "seconds": 0
+    },
+    "openai_session_memory": {
+      "pass": true,
+      "skipped": "User verified OpenAI connection separately and requested skip.",
+      "seconds": 0
+    },
+    "installed": {
+      "pass": true,
+      "version": "0.13.0",
+      "seconds": 0.1
+    },
+    "setup": {
+      "pass": true,
+      "changed": [],
+      "already_off": [
+        "input slim_agent_templates://managed_templates",
+        "input splunk_managed_skills://catalog",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - FineTuneCDTSM - Lineage Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - AI Agent - Telemetry Gen",
+        "scheduled search Splunk_ML_Toolkit - ML-SPL - Sourcetype Inference"
+      ],
+      "seconds": 0.4
+    },
+    "diagnostics": {
+      "pass": true,
+      "python": "3.13.11",
+      "imported": 79,
+      "seconds": 3.4
+    },
+    "create_skill": {
+      "pass": true,
+      "skill": "aitk_acceptance_20261031183057_skill",
+      "seconds": 3.5
+    },
+    "create_bedrock": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031183057_bedrock",
+      "reply_recovered": "HTTP 500",
+      "seconds": 22.2
+    },
+    "create_approval": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031183057_approval",
+      "seconds": 20.4
+    },
+    "create_structured": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031183057_structured",
+      "reply_recovered": "HTTP 500",
+      "seconds": 21.8
+    },
+    "create_skills": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031183057_skills",
+      "seconds": 20.5
+    },
+    "create_knowledge_base": {
+      "pass": true,
+      "agent": "aitk_acceptance_20261031183057_knowledge_base",
+      "reply_recovered": "HTTP 500",
+      "seconds": 21.1
+    },
+    "bedrock_answer": {
+      "pass": true,
+      "seconds": 31.9
+    },
+    "bedrock_mcp_tool": {
+      "pass": true,
+      "tool_calls": 1,
+      "tools": [
+        "splunk_run_query"
+      ],
+      "seconds": 36.4
+    },
+    "bedrock_session_memory": {
+      "pass": true,
+      "seconds": 68.9
+    },
+    "structured_output": {
+      "pass": true,
+      "seconds": 30.5
+    },
+    "approval": {
+      "pass": true,
+      "pending": 1,
+      "tools": [
+        "splunk_run_query"
+      ],
+      "seconds": 70.7
+    },
+    "skills": {
+      "pass": true,
+      "seconds": 31.0
+    },
+    "knowledge_base": {
+      "pass": true,
+      "searches": 1,
+      "seconds": 30.6
+    },
+    "bedrock_region": {
+      "pass": true,
+      "regions": [
+        "us-east-1"
+      ],
+      "seconds": 1.8
+    },
+    "instance_role_connections": {
+      "pass": true,
+      "model": "glm_instance_role",
+      "knowledge_base": "runbooks_instance_role",
+      "models": 2,
+      "knowledge_bases": 2,
+      "seconds": 0.4
+    },
+    "instance_role_assumed": {
+      "pass": true,
+      "assumed": 13,
+      "roles": [
+        "arn:aws:iam::XXXXXXXXXXXX:role/aitk-bedrock-full-access"
+      ],
+      "seconds": 1.0
+    },
+    "log_privacy": {
+      "pass": true,
+      "seconds": 1.9
+    },
+    "delete_agents": {
+      "pass": true,
+      "deleted": 5,
+      "replies_recovered": 4,
+      "seconds": 85.5
+    },
+    "delete_skills": {
+      "pass": true,
+      "deleted": 1,
+      "seconds": 2.1
+    }
+  }
+}

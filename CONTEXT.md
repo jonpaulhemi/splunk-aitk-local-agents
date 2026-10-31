@@ -29,3 +29,13 @@ _Avoid_: retrieval, RAG call
 **Chunk**:
 A small piece of one document in a knowledge base, a few paragraphs long. A search returns chunks, not whole documents.
 _Avoid_: passage, snippet, result
+
+## AWS credentials
+
+**Instance-role connection**:
+A Bedrock model or knowledge base connection with a role ARN and no access keys. Its credentials come from the search head's EC2 instance profile (through IMDSv2), which assumes the role, usually in another AWS account. Made on Cloud Connect's setup page, and named with an "_instance_role" suffix.
+_Avoid_: keyless connection, IMDS connection
+
+**Instance profile**:
+The IAM role attached to the search head's EC2 instance. For instance-role connections it only needs permission to assume the connections' roles.
+_Avoid_: instance role (for the profile itself), host credentials

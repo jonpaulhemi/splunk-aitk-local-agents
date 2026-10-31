@@ -20,6 +20,8 @@ This guide gets you a knowledge base you can attach to an agent, for trying out 
 
 ## 3. Create the credentials the search head uses
 
+On an EC2 search head (0.13.0 and later), you can skip the access key entirely. Give the instance profile `sts:AssumeRole` on the role below, give the role a trust policy naming the instance profile's role instead of an IAM user, and make the connection on Cloud Connect's **Instance-role connections** page instead of in step 4. [instance-role-connections.md](instance-role-connections.md) has the policies. The rest of this step is the access-key path.
+
 AI Toolkit's knowledge base connection takes an access key pair and a role ARN, and both are required. Our runtime signs searches with the role: it uses the key pair to assume the role, then searches as that role. AI Toolkit's own **Test connection** button calls Bedrock with the key pair directly and ignores the role. If you want that button to pass, also give the user permission to search; agent runs don't need it.
 
 1. **IAM role** `aitk-kb-search` with this permission policy, using your region, account ID and knowledge base ID:
@@ -67,6 +69,8 @@ AI Toolkit's knowledge base connection takes an access key pair and a role ARN, 
 Create the user first if the console rejects the role's trust policy because the user doesn't exist yet.
 
 ## 4. Connect it in AI Toolkit
+
+(For an instance-role connection, use Cloud Connect's setup page instead, then go straight to attaching it to an agent in step 5 below.)
 
 1. In AI Toolkit, open the agent connections page and add a connection with **Connection Type: Knowledge base** and **Knowledge base type: AWS KB**.
 2. Fill in the region, the knowledge base ID, the access key and secret key from step 3, and the role ARN `arn:aws:iam::<account-id>:role/aitk-kb-search`.

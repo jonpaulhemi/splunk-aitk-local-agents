@@ -190,6 +190,12 @@ class FakeSplunkd:
                 status, headers, payload = fake.dispatch(
                     self.command, self.path, dict(self.headers.items()), body
                 )
+                parsed = urllib.parse.urlsplit(self.path)
+                if ("/configs/conf-" in parsed.path and isinstance(payload, dict)
+                        and urllib.parse.parse_qs(parsed.query).get("output_mode") != ["json"]):
+                    # Like real splunkd: without output_mode=json, its own endpoints answer in Atom XML.
+                    payload = "<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"/>"
+                    headers.setdefault("Content-Type", "text/xml; charset=UTF-8")
                 if isinstance(payload, (dict, list)):
                     payload = json.dumps(payload)
                     headers.setdefault("Content-Type", "application/json; charset=UTF-8")
@@ -327,7 +333,7 @@ class FakeSplunkd:
 
         if ns_app and ns_app != "-":
             form = dict(urllib.parse.parse_qsl(body.decode())) if method == "POST" else {}
-            if method == "POST" and "admin_all_objects" not in self._capabilities(user):
+            if method in ("POST", "DELETE") and "admin_all_objects" not in self._capabilities(user):
                 return 403, {}, {"messages": [{"type": "ERROR", "text": "Forbidden"}]}
             if len(rest) >= 2 and rest[0] == "configs" and rest[1].startswith("conf-"):
                 return self._conf_endpoint(method, ns_app, rest[1][5:], rest[2:], form)
@@ -369,6 +375,18 @@ class FakeSplunkd:
         if not rest and method == "GET":
             return 200, {}, {"entry": [{"name": s, "content": self.conf_stanza(app, conf, s)}
                                        for s in self._conf_stanzas(app, conf)]}
+        if not rest and method == "POST":  # create a stanza
+            stanza = form.pop("name", "")
+            with self._lock:
+                if not stanza or self.conf_stanza(app, conf, stanza) is not None:
+                    return 409, {}, {"messages": [{"type": "ERROR", "text": "An object with name already exists"}]}
+                self.conf_writes[(app, conf, stanza)] = dict(form)
+            return 201, {}, {"entry": [{"name": stanza, "acl": {"app": app}, "content": dict(form)}]}
+        if len(rest) == 1 and method == "DELETE":
+            with self._lock:  # only stanzas made through REST can be deleted here
+                if self.conf_writes.pop((app, conf, rest[0]), None) is None:
+                    return NOT_FOUND
+            return 200, {}, {"entry": []}
         if len(rest) == 1:
             return self._conf_entry(method, app, conf, rest[0], form, lambda c: c)
         return NOT_FOUND
@@ -403,10 +421,18 @@ class FakeSplunkd:
                     return 409, {}, {"messages": [{"type": "ERROR", "text": "An object with name already exists"}]}
                 self.passwords[key] = form["password"]
                 return 201, {}, {"entry": [self._password_entry(key)]}
-            if method == "GET" and len(rest) == 1:
+            if len(rest) == 1:
                 realm, _, name = rest[0].rstrip(":").partition(":")
                 key = (app, realm, name)
                 if key not in self.passwords:
+                    return NOT_FOUND
+                form = dict(urllib.parse.parse_qsl(body.decode()))
+                if method == "POST" and "password" in form:  # update; a bare POST reads, as in splunkd
+                    self.passwords[key] = form["password"]
+                elif method == "DELETE":
+                    del self.passwords[key]
+                    return 200, {}, {"entry": []}
+                elif method not in ("GET", "POST"):
                     return NOT_FOUND
                 return 200, {}, {"entry": [self._password_entry(key)]}
         return NOT_FOUND
@@ -418,6 +444,11 @@ class FakeSplunkd:
             if not rest and method == "GET":
                 where = json.loads(dict(query).get("query") or "{}")
                 return 200, {}, [d for d in docs.values() if all(d.get(k) == v for k, v in where.items())]
+            if not rest and method == "DELETE":  # delete by query, as splunkd's KV store does
+                where = json.loads(dict(query).get("query") or "{}")
+                for key in [k for k, d in docs.items() if all(d.get(f) == v for f, v in where.items())]:
+                    del docs[key]
+                return 200, {}, ""
             if not rest and method == "POST":
                 doc = json.loads(body)
                 key = doc.get("_key") or secrets.token_hex(12)

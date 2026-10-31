@@ -5,15 +5,16 @@ request_timeout and reasoning_effort:
 - a custom OpenAI-compatible connection: provider "Custom", api_key, and
   api_base (the endpoint minus /chat/completions)
 - a Bedrock connection: provider "Bedrock", aws_region, aws_access_key_id,
-  aws_access_token (the secret key) and aws_role_arn (optional)
+  aws_access_token (the secret key) and aws_role_arn (optional). An
+  instance-role connection has null keys and a role ARN.
 """
 
 import re
 
+from aitk_local import aws_credentials
+
 CUSTOM = "Custom"
 BEDROCK = "Bedrock"
-# AI Toolkit's own Bedrock calls use this session name when assuming the role.
-ROLE_SESSION_NAME = "splunk-ai-commander-session-name"
 REGION = re.compile(r"[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-\d+")
 
 
@@ -79,10 +80,8 @@ def _openai_compatible(block):
 
 def _bedrock(block):
     region = block.get("aws_region")
-    key_id = block.get("aws_access_key_id")
-    secret = block.get("aws_access_token")
-    if not (region and key_id and secret):
-        raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key")
+    if not region:
+        raise UnusableConnection("The Bedrock connection needs a region")
     if not REGION.fullmatch(region):
         raise UnusableConnection(f"The Bedrock connection's region '{region}' isn't an AWS region name "
                                  "such as us-gov-west-1")
@@ -92,9 +91,22 @@ def _bedrock(block):
     timeout = block.get("request_timeout") or 60
     # agent.run bounds the whole run; these bound each call.
     config = Config(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 2})
-    credentials = {"aws_access_key_id": key_id, "aws_secret_access_key": secret, "aws_session_token": None}
-    if block.get("aws_role_arn"):
-        credentials = assumed_role(region, key_id, secret, block["aws_role_arn"], config)
+    try:
+        credentials = aws_credentials.for_connection(region, block.get("aws_access_key_id"),
+                                                     block.get("aws_access_token"), block.get("aws_role_arn"),
+                                                     config)
+    except aws_credentials.IncompleteKeys:
+        raise UnusableConnection("The Bedrock connection needs a region, an access key ID and a secret key") from None
+    except aws_credentials.MissingRoleArn:
+        raise UnusableConnection("The agent's Bedrock connection has no access keys, so it's an instance-role "
+                                 "connection and needs a role ARN") from None
+    except aws_credentials.NoInstanceCredentials:
+        raise UnusableConnection("The agent's Bedrock connection is an instance-role connection, but no instance "
+                                 "credentials were found: attach an instance profile and allow IMDSv2") from None
+    except aws_credentials.AssumeRoleFailed as e:
+        if block.get("aws_access_key_id"):
+            raise e.cause from None  # key-based: reported like any failed AWS call, as in 0.12.0
+        raise UnusableConnection(f"The agent's Bedrock connection couldn't be used: {e}") from None
     return ChatBedrockConverse(
         model=block["model"],
         region_name=region,
@@ -103,16 +115,3 @@ def _bedrock(block):
         config=config,
         **credentials,
     )
-
-
-def assumed_role(region, key_id, secret, role_arn, config):
-    """Temporary credentials for `role_arn`, as AI Toolkit gets them for its own Bedrock calls."""
-    import boto3
-
-    session = boto3.Session(aws_access_key_id=key_id, aws_secret_access_key=secret, region_name=region)
-    found = session.client("sts", config=config).assume_role(RoleArn=role_arn, RoleSessionName=ROLE_SESSION_NAME)
-    return {
-        "aws_access_key_id": found["Credentials"]["AccessKeyId"],
-        "aws_secret_access_key": found["Credentials"]["SecretAccessKey"],
-        "aws_session_token": found["Credentials"]["SessionToken"],
-    }

@@ -193,18 +193,19 @@ def test_other_vector_db_types_and_no_knowledge_bases_offer_no_search(aitk, splu
 
 def test_a_connection_without_keys_never_falls_back_to_other_aws_credentials(aitk, splunkd, admin, agent, llm, aws,
                                                                             monkeypatch):
-    # Credentials in splunkd's environment (or an instance role) must not stand in for missing ones.
+    # Credentials in splunkd's environment must not stand in for missing ones; without a role ARN
+    # the instance role can't be used either (#48).
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAAMBIENTKEY000001")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
-    keyless = {**RUNBOOKS, "connection_details": {"region": "us-west-2", "aws_access_key_id": "",
+    without_keys = {**RUNBOOKS, "connection_details": {"region": "us-west-2", "aws_access_key_id": "",
                                                   "aws_access_key_token": "", "role_arn": ""}}
     llm.script = _searches_then_answers()
 
-    row = _run(aitk, splunkd, admin, agent, llm, [keyless])
+    row = _run(aitk, splunkd, admin, agent, llm, [without_keys])
 
-    assert row["result_1"] == ("From the runbooks: The knowledge base connection needs a region, "
-                               "an access key ID and a secret key")
-    assert aws.retrieve_calls == []
+    assert row["result_1"] == ("From the runbooks: Knowledge base EJGJR4SKJL has no access keys, "
+                               "so it's an instance-role connection and needs a role ARN")
+    assert aws.retrieve_calls == [] and aws.assume_role_calls == []
 
 
 def test_a_search_never_waits_for_approval_even_beside_gated_tools(aitk, splunkd, admin, agent, llm, aws,

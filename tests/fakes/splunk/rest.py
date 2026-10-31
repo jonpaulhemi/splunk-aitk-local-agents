@@ -40,7 +40,8 @@ def simpleRequest(
     if not url.startswith("http"):
         url = os.environ["FAKE_SPLUNKD_URI"] + url
     if getargs:
-        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(getargs)
+        # As the real simpleRequest: always "?", so a path that already has a query breaks here too.
+        url += "?" + urllib.parse.urlencode(getargs)
     data = None
     headers = {}
     if sessionKey:

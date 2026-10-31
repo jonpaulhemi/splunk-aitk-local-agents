@@ -9,8 +9,21 @@ For one standalone Splunk Enterprise search head on Linux x86_64. AI Toolkit 6.2
    ```
    $SPLUNK_HOME/bin/splunk install app splunk_cloud_connect-<version>.tgz
    ```
-3. **Restart splunkd.** The app has no setup page, and Splunk Web won't ask for one.
-4. **Check the install.** As an admin, run:
+3. **Set the runtime's host name.** AI Toolkit reaches the local runtime at `https://<advertised_host>:8089`, and it checks splunkd's TLS certificate against that name. If you don't set one, the app uses the machine's own name, such as `ip-172-31-35-201.ec2.internal` on EC2. That usually isn't on the certificate, so creating an agent fails with "certificate verify failed: Hostname mismatch", and so do AI Toolkit's skills and template syncs in `mlspl.log`. To set it:
+   1. Find the certificate's name:
+      ```
+      echo | openssl s_client -connect localhost:8089 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName
+      ```
+   2. Put it in `$SPLUNK_HOME/etc/apps/splunk_cloud_connect/local/aitk_local.conf`, owned by the Splunk user:
+      ```
+      [runtime]
+      advertised_host = <a DNS name from the certificate>
+      ```
+   3. Make sure the search head can resolve that name to itself, with `getent hosts <name>`. If it can't, add the name to `/etc/hosts`.
+
+   `local/` survives upgrades, but a reinstall drops it unless you restore it.
+4. **Restart splunkd.** The app has no setup page, and Splunk Web won't ask for one.
+5. **Check the install.** As an admin, run:
    ```
    curl -sk -u admin "https://localhost:8089/services/aitk_local/diagnostics?output_mode=json"
    ```
@@ -24,7 +37,7 @@ Run this once as an admin after installing. It turns off AI Toolkit's own cloud 
 curl -sk -u admin -X POST "https://localhost:8089/services/aitk_local/offline_setup?output_mode=json"
 ```
 
-Setup doesn't change Splunk's own platform telemetry, which sends usage data to Splunk (seen: `quickdraw.splunk.com`, `telemetry-splkmobile.dataeng.splunk.com`). That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation** and turn off every kind of sharing, or set `sendAnonymizedUsage`, `sendSupportUsage`, `sendLicenseUsage` and `sendAnonymizedWebAnalytics` to false through `/servicesNS/nobody/splunk_instrumentation/admin/telemetry/general`, then restart. The no-cloud-traffic check in [`docs/release.md`](release.md) fails on this traffic like any other Splunk cloud traffic.
+Setup doesn't change Splunk's own platform telemetry, which sends usage data to Splunk (seen: `quickdraw.splunk.com`, `telemetry-splkmobile.dataeng.splunk.com`). That's a server-wide setting, not part of AI Toolkit, and some license types need license usage reporting. To turn it off, go to **Settings > Instrumentation** and turn off every kind of sharing, or set `sendAnonymizedUsage`, `sendSupportUsage`, `sendLicenseUsage` and `sendAnonymizedWebAnalytics` to false through `/servicesNS/nobody/splunk_instrumentation/admin/telemetry/general`, then restart.
 
 splunkd's app manager also reaches Splunkbase on its own schedule, to download the app catalog from `cdn.splunkbase.splunk.com` and check `apps.splunk.com` for app updates. Setup doesn't change this either, since it's a server-wide setting. To turn it off, add this to `$SPLUNK_HOME/etc/system/local/server.conf` and restart:
 
@@ -44,6 +57,7 @@ Next, set up connections and agents in AI Toolkit as usual:
 - knowledge base connections (AWS KB), if your agents search one; [knowledge-base-setup.md](knowledge-base-setup.md) walks through creating a small one
   - searches go to AWS Bedrock Agent Runtime (`bedrock-agent-runtime.<region>.amazonaws.com`), plus STS when the connection has a role; that's AWS traffic, not Splunk cloud
   - searches run as the connection's role ARN, assumed with its access key when each run starts; AI Toolkit's own **Test connection** uses the access key directly and ignores the role, so a connection can pass that test and still fail an agent run if the key can't assume the role. The run's error names the role and the AWS error code.
+- on an EC2 search head, Bedrock model and knowledge base connections can skip access keys: make them on this app's **Instance-role connections** page instead of in AI Toolkit's form (0.13.0 and later). See [instance-role-connections.md](instance-role-connections.md) for the IAM setup. The runtime also reaches the instance metadata service (`169.254.169.254`, link-local) for those connections.
 - agents in Agent Launchpad
 
 ## Upgrading this app

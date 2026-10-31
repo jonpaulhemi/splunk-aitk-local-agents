@@ -13,15 +13,18 @@ class SplunkdError(RuntimeError):
         self.status = status
 
 
-def call(rest_uri, token, method, path, postargs=None):
-    """Make a REST call as `token` and return (status, parsed JSON or None)."""
+def call(rest_uri, token, method, path, postargs=None, getargs=None):
+    """Make a REST call as `token` and return (status, parsed JSON or None).
+
+    Put query arguments in `getargs`, never in `path`: simpleRequest appends its
+    own "?output_mode=json", and a second "?" makes splunkd answer in XML."""
     try:
         response, content = rest.simpleRequest(
             f"{rest_uri}{path}",
             sessionKey=token,
             method=method,
             postargs=postargs,
-            getargs={"output_mode": "json"},
+            getargs={**(getargs or {}), "output_mode": "json"},
             raiseAllErrors=False,
         )
     except RESTException as e:
@@ -32,6 +35,27 @@ def call(rest_uri, token, method, path, postargs=None):
     except ValueError:
         body = None
     return response.status, body
+
+
+def call_json(rest_uri, token, method, path, body=None):
+    """Make a REST call with a JSON body (as AI Toolkit's own REST API takes) and
+    return (status, parsed JSON or None)."""
+    try:
+        response, content = rest.simpleRequest(
+            f"{rest_uri}{path}",
+            sessionKey=token,
+            method=method,
+            jsonargs=None if body is None else json.dumps(body),
+            getargs={"output_mode": "json"},
+            raiseAllErrors=False,
+        )
+    except RESTException as e:
+        return e.statusCode, None
+    try:
+        parsed = json.loads(content) if content else None
+    except ValueError:
+        parsed = None
+    return response.status, parsed
 
 
 def capabilities(rest_uri, token):
