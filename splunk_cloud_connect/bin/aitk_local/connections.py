@@ -267,7 +267,7 @@ class _Context:
     # -- the registry -----------------------------------------------------
 
     def registry(self):
-        status, body = splunkd.call(self.rest_uri, self.token, "GET", f"{REGISTRY}?count=0")
+        status, body = splunkd.call(self.rest_uri, self.token, "GET", REGISTRY, getargs={"count": 0})
         if status != 200:
             raise splunkd.SplunkdError(status, "reading the connection registry failed")
         return {e["name"]: e["content"] for e in body.get("entry", []) if e.get("content", {}).get("kind")}

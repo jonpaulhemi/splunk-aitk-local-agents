@@ -421,3 +421,28 @@ def test_key_based_knowledge_bases_cant_be_edited_or_deleted_here(aitk, splunkd,
 
     assert response.status_code == 404
     assert "keys_kb" in _aitk_kbs(aitk, splunkd, admin)
+
+
+@pytest.mark.parametrize("method, path", [
+    ("GET", "aitk_local/connections"),
+    ("POST", "aitk_local/connections/models"),
+    ("POST", "aitk_local/connections/knowledge_bases/test"),
+    ("POST", "aitk_local/connections/models/available"),
+    ("POST", "aitk_local/connections/models/glm_instance_role"),
+    ("DELETE", "aitk_local/connections/knowledge_bases/runbooks_instance_role"),
+])
+def test_splunk_web_lets_the_setup_page_reach_every_route(method, path):
+    # Splunk Web proxies a custom endpoint only if web.conf exposes it.
+    import configparser
+    import fnmatch
+    import pathlib
+
+    web = configparser.ConfigParser(interpolation=None)
+    web.read(pathlib.Path(__file__).parents[1] / "splunk_cloud_connect" / "default" / "web.conf")
+    exposed = [(web[s]["pattern"], [m.strip() for m in web[s]["methods"].split(",")])
+               for s in web.sections() if s.startswith("expose:")]
+    def matches(pattern):  # one "*" stands for one path segment
+        want, got = pattern.split("/"), path.split("/")
+        return len(want) == len(got) and all(fnmatch.fnmatchcase(g, w) for w, g in zip(want, got))
+
+    assert any(matches(pattern) and method in methods for pattern, methods in exposed)

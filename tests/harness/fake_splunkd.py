@@ -190,6 +190,12 @@ class FakeSplunkd:
                 status, headers, payload = fake.dispatch(
                     self.command, self.path, dict(self.headers.items()), body
                 )
+                parsed = urllib.parse.urlsplit(self.path)
+                if ("/configs/conf-" in parsed.path and isinstance(payload, dict)
+                        and urllib.parse.parse_qs(parsed.query).get("output_mode") != ["json"]):
+                    # Like real splunkd: without output_mode=json, its own endpoints answer in Atom XML.
+                    payload = "<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"/>"
+                    headers.setdefault("Content-Type", "text/xml; charset=UTF-8")
                 if isinstance(payload, (dict, list)):
                     payload = json.dumps(payload)
                     headers.setdefault("Content-Type", "application/json; charset=UTF-8")
