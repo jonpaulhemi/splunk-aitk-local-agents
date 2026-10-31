@@ -18,6 +18,10 @@ The three agents are templates you already have in Agent Launchpad:
   connection, with --kb-question, a question only its documents answer, and
   --kb-expect, a word or phrase the answer must contain. Without it the
   knowledge base check is reported as skipped.
+- --instance-role (optional, 0.13.0): the Bedrock agent's connection, and the
+  --knowledge-base if given, are instance-role connections made on Cloud
+  Connect's setup page. Checks that the setup endpoint lists them and that
+  this run's invokes assumed their roles with the instance credentials.
 
 The skills check creates its own skill, aitk_acceptance_<time>_skill, and
 deletes it at the end.
@@ -177,7 +181,9 @@ class Run:
         self.skills_created = []
         self.skill_word = None
         self.checks = {}
+        self.started = time.time()
         self.runtime_ids = {}
+        self.template_connections = {}  # kind -> the template's LLM connection name
         # Given in memory checks, then looked for in aitk_local.log.
         self.code_words = []
         self.agents = None  # the agents API path, once the user is known
@@ -256,6 +262,7 @@ class Run:
         if status != 200:
             raise Failed(f"template agent {template!r} not found (HTTP {status})")
         latest = body["versions"][0]
+        self.template_connections[kind] = (latest.get("llm") or {}).get("connection_name")
         name = f"{self.prefix}_{kind}"
         settings = {
             "name": name,
@@ -451,6 +458,38 @@ class Run:
             raise Failed("no Bedrock invoke with a region found in aitk_local.log (index=_internal)")
         return {"regions": regions}
 
+    def instance_role_connections(self):
+        status, body = self.splunkd.call("GET", "/services/aitk_local/connections", {"output_mode": "json"})
+        if status != 200:
+            raise Failed(f"the instance-role connections endpoint returned HTTP {status}")
+        models = {c.get("name") for c in body.get("models") or []}
+        kbs = {c.get("name") for c in body.get("knowledge_bases") or []}
+        model = self.template_connections.get("bedrock")
+        if model not in models:
+            raise Failed(f"the Bedrock agent's connection {model!r} isn't an instance-role connection "
+                         f"(listed: {sorted(models)})")
+        if self.args.knowledge_base and self.args.knowledge_base not in kbs:
+            raise Failed(f"knowledge base {self.args.knowledge_base!r} isn't an instance-role connection "
+                         f"(listed: {sorted(kbs)})")
+        return {"model": model, "knowledge_base": self.args.knowledge_base, "models": len(models),
+                "knowledge_bases": len(kbs)}
+
+    def instance_role_assumed(self):
+        # The roles assumed with the instance credentials since this run started, from aitk_local.log.
+        spl = ("search index=_internal source=*aitk_local.log \"with the instance credentials\" "
+               f"earliest={int(self.started)} | rex \"assumed role (?<role>\\S+) with\" "
+               "| stats count values(role) as roles")
+        deadline = time.monotonic() + 90
+        while True:
+            rows = self.splunkd.search(spl)
+            count = int(rows[0].get("count", 0)) if rows else 0
+            if count:
+                roles = rows[0].get("roles")
+                return {"assumed": count, "roles": [roles] if isinstance(roles, str) else roles}
+            if time.monotonic() > deadline:
+                raise Failed("no run assumed a role with the instance credentials (aitk_local.log, index=_internal)")
+            time.sleep(10)
+
     def log_privacy(self):
         if not self.code_words:
             raise Failed("no memory check ran, so there's nothing to look for")
@@ -492,6 +531,8 @@ def main():
     parser.add_argument("--knowledge-base", help="an AWS KB knowledge base connection to check searches with")
     parser.add_argument("--kb-question", help="a question only that knowledge base's documents answer")
     parser.add_argument("--kb-expect", help="a word or phrase the answer to --kb-question must contain")
+    parser.add_argument("--instance-role", action="store_true",
+                        help="the Bedrock agent's connection (and --knowledge-base) are instance-role connections")
     parser.add_argument("--ready-timeout", type=int, default=180)
     parser.add_argument("--out", help="write the JSON report here as well as printing it")
     args = parser.parse_args()
@@ -539,6 +580,9 @@ def main():
             print("SKIP knowledge_base: no --knowledge-base given", file=sys.stderr)
         if "bedrock" in agents:
             run.check("bedrock_region", run.bedrock_region)
+        if args.instance_role:
+            run.check("instance_role_connections", run.instance_role_connections)
+            run.check("instance_role_assumed", run.instance_role_assumed)
         run.check("log_privacy", run.log_privacy)
     if run.created:
         run.check("delete_agents", run.delete_all)
@@ -551,6 +595,7 @@ def main():
         "search_head": urllib.parse.urlparse(args.base).hostname,
         "templates": {"openai": args.openai_agent, "bedrock": args.bedrock_agent, "approval": args.approval_agent,
                       **({"knowledge_base": args.knowledge_base} if args.knowledge_base else {})},
+        "instance_role": args.instance_role,
         "pass": all(c["pass"] for c in run.checks.values()),
         "checks": run.checks,
     }

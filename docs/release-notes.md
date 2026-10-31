@@ -1,5 +1,32 @@
 # Release notes
 
+## 0.13.0
+
+Bedrock models and knowledge bases with no access keys. The acceptance and no-cloud-traffic reports go in `docs/releases/0.13.0/` once that run passes.
+
+- **Instance-role connections:** a Bedrock model or knowledge base connection with a role ARN and no access keys.
+  - The runtime takes the EC2 instance profile's credentials from IMDSv2 only, never from `AWS_*` environment variables or `~/.aws`.
+  - It assumes the connection's role on the STS endpoint in the connection's region, on every run, and calls Bedrock as that role. The role is usually in another account.
+  - The run log names the role.
+  - Clear errors for a missing role ARN, no instance credentials, and a refused AssumeRole (naming the role and the AWS error code).
+  - Connections with access keys work as before, and keys win when a connection has both.
+- **Setup page:** this app is now visible in Splunk Web, with one admin-only page, **Instance-role connections**, backed by `/services/aitk_local/connections`.
+  - It creates, edits, lists and deletes instance-role connections, writing them into AI Toolkit's own store through AI Toolkit's REST API with empty key fields and an `_instance_role` name suffix.
+  - Each save is tested first, and the result says whether AssumeRole or the Bedrock call failed. **Save anyway** skips that.
+  - Model connections can pick from the models the role can see.
+  - Key-based connections are never touched.
+- **`| ai`:** AI Toolkit's own `| ai` command works with instance-role model connections, unchanged (best effort; see the known issues).
+- **Egress:** instance-role connections also reach the instance metadata service (link-local `169.254.169.254`) and STS in the connection's region. Still no Splunk cloud traffic.
+- **New:** [`instance-role-connections.md`](instance-role-connections.md), covering IAM setup across two accounts, IMDS, the page and REST. The acceptance run gains `--instance-role`.
+
+**Known issues**
+- **AI Toolkit's Test connection button** always fails for instance-role connections, models and knowledge bases alike, since it needs access keys. Use the setup page's test.
+- **Edit instance-role connections only on the setup page.** AI Toolkit's form asks for keys, and saving there can turn the connection into a key-based one.
+- **`| ai ... kb_id=`** searches the knowledge base as the *model* connection's role, so that role needs `bedrock:Retrieve` on the knowledge base too.
+- **Names:** AI Toolkit only accepts letters, digits and underscores, so the suffix is `_instance_role`, not "(instance role)" as first planned.
+- GovCloud and C2S role ARNs are accepted, but only commercial AWS has been tested.
+- The 0.12.0 known issues below still apply.
+
 ## 0.12.0
 
 Skills and AWS knowledge bases. The acceptance and no-cloud-traffic reports are in [`docs/releases/0.12.0/`](releases/0.12.0/).

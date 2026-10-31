@@ -48,7 +48,7 @@ SPLUNK_PASSWORD=... python3 tools/acceptance.py https://<search head FQDN>:8089 
     --out acceptance.json
 ```
 
-Without `--knowledge-base`, the knowledge base check is reported as skipped. [`knowledge-base-setup.md`](knowledge-base-setup.md) walks through making a small knowledge base for it.
+Without `--knowledge-base`, the knowledge base check is reported as skipped. From 0.13.0, add `--instance-role` when the Bedrock agent's connection and the knowledge base are instance-role connections made on the setup page ([`instance-role-connections.md`](instance-role-connections.md)). The run then also checks that the setup endpoint lists them, and that this run's invokes assumed their roles with the instance credentials. [`knowledge-base-setup.md`](knowledge-base-setup.md) walks through making a small knowledge base for it.
 
 The three agents are templates, and they aren't changed. The script copies their connections into new `aitk_acceptance_*` agents and checks the following:
 - the install and the Cloud Connect stand-in

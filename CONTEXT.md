@@ -33,7 +33,7 @@ _Avoid_: passage, snippet, result
 ## AWS credentials
 
 **Instance-role connection**:
-A Bedrock model or knowledge base connection with a role ARN and no access keys. Its credentials come from the search head's EC2 instance profile (through IMDSv2), which assumes the role, usually in another AWS account. Made on Cloud Connect's setup page, and named with an "(instance role)" suffix.
+A Bedrock model or knowledge base connection with a role ARN and no access keys. Its credentials come from the search head's EC2 instance profile (through IMDSv2), which assumes the role, usually in another AWS account. Made on Cloud Connect's setup page, and named with an "_instance_role" suffix.
 _Avoid_: keyless connection, IMDS connection
 
 **Instance profile**:
