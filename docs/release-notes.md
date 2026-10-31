@@ -2,7 +2,7 @@
 
 ## 0.13.0
 
-Bedrock models and knowledge bases with no access keys. The acceptance and no-cloud-traffic reports go in `docs/releases/0.13.0/` once that run passes.
+Bedrock models and knowledge bases with no access keys. The acceptance report goes in `docs/releases/0.13.0/` once that run passes.
 
 - **Instance-role connections:** a Bedrock model or knowledge base connection with a role ARN and no access keys.
   - The runtime takes the EC2 instance profile's credentials from IMDSv2 only, never from `AWS_*` environment variables or `~/.aws`.
@@ -18,6 +18,7 @@ Bedrock models and knowledge bases with no access keys. The acceptance and no-cl
 - **`| ai`:** AI Toolkit's own `| ai` command works with instance-role model connections, unchanged (best effort; see the known issues).
 - **Egress:** instance-role connections also reach the instance metadata service (link-local `169.254.169.254`) and STS in the connection's region. Still no Splunk cloud traffic.
 - **New:** [`instance-role-connections.md`](instance-role-connections.md), covering IAM setup across two accounts, IMDS, the page and REST. The acceptance run gains `--instance-role`.
+- **Release process:** no more outbound-traffic capture. 0.11.0 and 0.12.0 showed no Splunk cloud traffic, so a release is now the acceptance run alone (see `docs/release.md`). `tools/egress_watch.py` stays for checking by hand.
 - **Install guide:** step 3 now covers `advertised_host`, which must be a name on splunkd's TLS certificate. Without it, creating an agent fails with a hostname mismatch on hosts such as EC2, whose own name isn't on the certificate.
 
 **Known issues**
